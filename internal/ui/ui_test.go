@@ -53,6 +53,9 @@ func TestRejectsMissingTokenForeignHostAndCrossSiteRequests(t *testing.T) {
 	if status != http.StatusOK || len(body) == 0 {
 		t.Fatal("静态脚本不可用")
 	}
+	if status, body := h.request(http.MethodGet, "/static/logo.svg", nil, map[string]string{"X-Jumpdb-Token": ""}); status != http.StatusOK || !strings.Contains(string(body), "<svg") {
+		t.Fatal("标志图片不可用")
+	}
 	request, _ := http.NewRequest(http.MethodGet, h.base+"/?token="+h.token, nil)
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {

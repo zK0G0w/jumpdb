@@ -64,13 +64,7 @@ h1, h2, h3, p { margin: 0; }
 
 .brand { display: flex; align-items: center; gap: 10px; }
 
-.brand-mark {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 45%, #a855f7));
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 18%);
-}
+.brand-mark { display: block; width: 24px; height: 24px; }
 
 .brand-name { font-size: 16px; font-weight: 650; letter-spacing: -0.01em; }
 .brand-sub { color: var(--muted); font-size: 13px; padding-left: 10px; border-left: 1px solid var(--border-strong); }

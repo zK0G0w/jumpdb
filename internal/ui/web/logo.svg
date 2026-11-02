@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#bg)"/>
+  <g fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 数据库圆柱 -->
+    <ellipse cx="16" cy="18" rx="7" ry="2.8"/>
+    <path d="M9 18v6c0 1.55 3.13 2.8 7 2.8s7-1.25 7-2.8v-6"/>
+    <path d="M9 21c0 1.55 3.13 2.8 7 2.8s7-1.25 7-2.8"/>
+    <!-- 跳转弧线与箭头 -->
+    <path d="M8.5 12.5Q16 1.5 23 11"/>
+    <path d="M19.2 9.8 23 11 22.8 7"/>
+  </g>
+</svg>
