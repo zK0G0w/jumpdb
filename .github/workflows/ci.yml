@@ -51,10 +51,24 @@ jobs:
       - name: 静态检查
         run: go vet ./...
       - name: 构建
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
+          # 只有标签触发的运行注入标签名，PR 与 main 构建保持 dev；标签字符受限，避免破坏 -ldflags 参数。
+          version=dev
+          if [[ "$REF_TYPE" == tag ]]; then
+            [[ "$REF_NAME" =~ ^v[0-9A-Za-z.+-]+$ ]] || { echo "标签名不符合版本格式" >&2; exit 1; }
+            version="$REF_NAME"
+          fi
           go build ./...
           mkdir -p "$RUNNER_TEMP/package"
-          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/package/jumpdb" ./cmd/jumpdb
+          CGO_ENABLED=0 go build -trimpath \
+            -ldflags "-X github.com/zK0G0w/jumpdb/internal/cli.version=$version" \
+            -o "$RUNNER_TEMP/package/jumpdb" ./cmd/jumpdb
+          actual="$("$RUNNER_TEMP/package/jumpdb" version)"
+          echo "$actual"
+          test "$actual" = "jumpdb $version (darwin/$EXPECTED_ARCH)"
       - name: CLI 本机合成验证
         run: python3 -I -B scripts/smoke_cli.py "$RUNNER_TEMP/package/jumpdb"
       - name: 打包已验证的二进制
