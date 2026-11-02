@@ -283,3 +283,63 @@ func TestConcurrentLogin(t *testing.T) {
 	}
 	group.Wait()
 }
+
+func TestActivateProtocolAndErrors(t *testing.T) {
+	const token, sessionID = "synthetic-activate-token", "synthetic-session-id"
+	reply := `{"code":0,"data":{"status":1}}`
+	status := http.StatusOK
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/3.0/hostOpsService/loginResource" {
+			fmt.Fprintf(writer, `{"heartCount":{"timestamp":%d}}`, time.Now().UnixMilli()+60000)
+			return
+		}
+		if request.Method != http.MethodPost || request.URL.Path != "/3.0/hostOpsService/checkSSOTool" || request.Header.Get("Content-Type") != "application/json" {
+			t.Error("激活请求方法、路径或类型不符合协议")
+		}
+		if cookie, err := request.Cookie("YAB_AUTH_TOKEN"); err != nil || cookie.Value != token {
+			t.Error("激活请求未携带 Token Cookie")
+		}
+		timestamp, err := strconv.ParseInt(request.Header.Get("Timestamp"), 10, 64)
+		if err != nil || abs(timestamp-(time.Now().UnixMilli()+60000)) > 2000 || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(request.Header.Get("Nonce")) {
+			t.Error("激活请求未使用校准后的 timestamp 或签名 nonce")
+		}
+		var body map[string]map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil || len(body) != 2 || body["c"] == nil || len(body["c"]) != 0 || len(body["b"]) != 1 || body["b"]["sessionId"] != sessionID {
+			t.Error("激活请求体不是 {\"c\":{},\"b\":{\"sessionId\":...}}")
+		}
+		writer.WriteHeader(status)
+		fmt.Fprint(writer, reply)
+	}))
+	defer server.Close()
+	client, err := New(context.Background(), Options{Portal: server.URL, Token: token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Activate(context.Background(), sessionID); err != nil {
+		t.Fatalf("激活成功响应被判为失败: %v", err)
+	}
+	for _, test := range []struct {
+		name   string
+		status int
+		body   string
+		want   error
+	}{
+		{"business", http.StatusOK, `{"code":500,"msg":"synthetic-session-id"}`, ErrBusiness},
+		{"missing-code", http.StatusOK, `{"data":{"status":1}}`, ErrResponse},
+		{"http", http.StatusNotFound, `synthetic-session-id`, ErrHTTP},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			status, reply = test.status, test.body
+			err := client.Activate(context.Background(), sessionID)
+			if !errors.Is(err, test.want) {
+				t.Fatalf("错误分类不符: %v", err)
+			}
+			if strings.Contains(err.Error(), sessionID) || strings.Contains(err.Error(), token) {
+				t.Fatal("错误泄露会话 ID 或 Token")
+			}
+		})
+	}
+	if err := client.Activate(context.Background(), ""); !errors.Is(err, ErrRequest) {
+		t.Fatal("空会话 ID 未在本地拒绝")
+	}
+}

@@ -29,6 +29,7 @@ type Stage string
 const (
 	StageSession   Stage = "session"
 	StageDial      Stage = "dial"
+	StageActivate  Stage = "activate"
 	StageHandshake Stage = "handshake"
 )
 
@@ -38,11 +39,14 @@ type Event struct {
 	Success bool
 }
 
-// Config 描述本地隧道的代理端口、会话申请器和握手超时。
+// Config 描述本地隧道的代理端口、会话申请器、会话激活和握手超时。
 type Config struct {
 	ProxyPort        int
 	HandshakeTimeout time.Duration
 	Provider         Provider
+	// Activate 可选；在代理连接建立后、发送握手前一刻调用，失败则不握手。
+	// 部分资源要求会话先激活，且激活与握手的间隔须尽量短。
+	Activate func(context.Context, secdb.Params) error
 	// OnEvent 可被不同连接并发调用，应及时返回；不传递原始错误以免泄露凭据。
 	OnEvent func(Event)
 }
@@ -182,6 +186,14 @@ func (s *server) handle(client net.Conn) {
 	}()
 	s.report(StageDial, true)
 
+	if s.cfg.Activate != nil {
+		if err := s.cfg.Activate(s.ctx, params); err != nil {
+			s.report(StageActivate, false)
+			return
+		}
+		s.report(StageActivate, true)
+	}
+
 	if err := s.handshake(proxy, params); err != nil {
 		s.report(StageHandshake, false)
 		return
@@ -211,12 +223,17 @@ func (s *server) report(stage Stage, success bool) {
 }
 
 func (s *server) handshake(proxy net.Conn, params secdb.Params) error {
+	// 握手格式为 yabP + sessionId + 用户名字节长度（1 字节）+ 用户名；
+	// 长度写错时代理会把多出的用户名字节混入数据库流，登录包随之失效。
+	if len(params.Username) > 255 {
+		return errors.New("tunnel: username too long for handshake")
+	}
 	if deadline := time.Now().Add(s.cfg.HandshakeTimeout); s.cfg.HandshakeTimeout > 0 {
 		if err := proxy.SetDeadline(deadline); err != nil {
 			return err
 		}
 	}
-	if _, err := io.WriteString(proxy, "yabP"+params.SessionID+"\x04"+params.Username); err != nil {
+	if _, err := io.WriteString(proxy, "yabP"+params.SessionID+string([]byte{byte(len(params.Username))})+params.Username); err != nil {
 		return err
 	}
 	response := make([]byte, len(handshakeResponse))

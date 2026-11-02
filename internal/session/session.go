@@ -32,7 +32,11 @@ var (
 	ErrResponse = errors.New("session: 响应格式错误")
 )
 
-const saltChars = "ABCDEFGHJKMNPQRSTWXYZabcdefhijkmnprstwxyz2345678"
+const (
+	saltChars    = "ABCDEFGHJKMNPQRSTWXYZabcdefhijkmnprstwxyz2345678"
+	loginPath    = "/3.0/hostOpsService/loginResource"
+	activatePath = "/3.0/hostOpsService/checkSSOTool"
+)
 
 // Options 是调用方提供的门户地址、授权和数据库解密密钥。
 type Options struct {
@@ -73,7 +77,7 @@ func New(ctx context.Context, options Options) (*Client, error) {
 	result := &Client{portal: strings.TrimSuffix(options.Portal, "/"), token: options.Token, key: options.DBKey, http: client}
 	before := time.Now().UnixMilli()
 	sum := sha256.Sum256([]byte("probe"))
-	response, err := result.post(ctx, []ResourceID{}, strconv.FormatInt(time.Now().UnixMilli(), 10), hex.EncodeToString(sum[:]))
+	response, err := result.post(ctx, loginPath, loginBody([]ResourceID{}), strconv.FormatInt(time.Now().UnixMilli(), 10), hex.EncodeToString(sum[:]))
 	if err != nil {
 		return nil, err
 	}
@@ -90,33 +94,13 @@ func (client *Client) Login(ctx context.Context, id ResourceID) (secdb.Params, e
 	if id.value == nil {
 		return secdb.Params{}, fmt.Errorf("%w: 资源 ID 未设置", ErrRequest)
 	}
-	salt := make([]byte, 16)
-	for index := range salt {
-		number, err := rand.Int(rand.Reader, big.NewInt(int64(len(saltChars))))
-		if err != nil {
-			return secdb.Params{}, fmt.Errorf("%w: 无法生成 nonce", ErrRequest)
-		}
-		salt[index] = saltChars[number.Int64()]
-	}
-	client.mu.Lock()
-	timestamp := strconv.FormatInt(time.Now().UnixMilli()+client.offset, 10)
-	client.mu.Unlock()
-	response, err := client.post(ctx, []ResourceID{id}, timestamp, nonceFor(salt, timestamp))
+	response, err := client.signedPost(ctx, loginPath, loginBody([]ResourceID{id}))
 	if err != nil {
 		return secdb.Params{}, err
 	}
-	serverTime, err := response.timestamp()
+	code, err := response.code()
 	if err != nil {
 		return secdb.Params{}, err
-	}
-	if serverTime != 0 {
-		client.mu.Lock()
-		client.offset = serverTime - time.Now().UnixMilli()
-		client.mu.Unlock()
-	}
-	var code int
-	if len(response.Code) == 0 || bytes.Equal(response.Code, []byte("null")) || json.Unmarshal(response.Code, &code) != nil {
-		return secdb.Params{}, fmt.Errorf("%w: code 无效", ErrResponse)
 	}
 	if code != 0 {
 		if code == 901 {
@@ -141,6 +125,79 @@ func (client *Client) Login(ctx context.Context, id ResourceID) (secdb.Params, e
 		return secdb.Params{}, fmt.Errorf("%w: 缺少代理握手必需字段", ErrResponse)
 	}
 	return params, nil
+}
+
+// Activate 调用 checkSSOTool 将会话置为就绪；部分资源强制要求激活，
+// 未激活时代理握手返回 success 但不发送数据库握手包。
+// 调用方应在代理握手前一刻调用，期间不插入其他门户请求，否则激活可能失效。
+func (client *Client) Activate(ctx context.Context, sessionID string) error {
+	if sessionID == "" {
+		return fmt.Errorf("%w: 会话 ID 未设置", ErrRequest)
+	}
+	body := struct {
+		C struct{} `json:"c"`
+		B struct {
+			SessionID string `json:"sessionId"`
+		} `json:"b"`
+	}{}
+	body.B.SessionID = sessionID
+	response, err := client.signedPost(ctx, activatePath, body)
+	if err != nil {
+		return err
+	}
+	code, err := response.code()
+	if err != nil {
+		return err
+	}
+	// 与旧版一致，只以 code 判断成功；data.status 的其他取值语义未知，不额外拒绝。
+	if code != 0 {
+		return ErrBusiness
+	}
+	return nil
+}
+
+// signedPost 以校准后的时间戳和随机 nonce 请求门户，并用响应中的服务器时间更新偏差。
+func (client *Client) signedPost(ctx context.Context, path string, payload any) (response, error) {
+	salt := make([]byte, 16)
+	for index := range salt {
+		number, err := rand.Int(rand.Reader, big.NewInt(int64(len(saltChars))))
+		if err != nil {
+			return response{}, fmt.Errorf("%w: 无法生成 nonce", ErrRequest)
+		}
+		salt[index] = saltChars[number.Int64()]
+	}
+	client.mu.Lock()
+	timestamp := strconv.FormatInt(time.Now().UnixMilli()+client.offset, 10)
+	client.mu.Unlock()
+	result, err := client.post(ctx, path, payload, timestamp, nonceFor(salt, timestamp))
+	if err != nil {
+		return response{}, err
+	}
+	serverTime, err := result.timestamp()
+	if err != nil {
+		return response{}, err
+	}
+	if serverTime != 0 {
+		client.mu.Lock()
+		client.offset = serverTime - time.Now().UnixMilli()
+		client.mu.Unlock()
+	}
+	return result, nil
+}
+
+func loginBody(ids []ResourceID) any {
+	values := make([]any, len(ids))
+	for index, id := range ids {
+		values[index] = id.value
+	}
+	return struct {
+		C struct{} `json:"c"`
+		B struct {
+			IDs []any `json:"ids"`
+		} `json:"b"`
+	}{B: struct {
+		IDs []any `json:"ids"`
+	}{IDs: values}}
 }
 
 func nonceFor(salt []byte, timestamp string) string {
@@ -176,23 +233,20 @@ func (result response) timestamp() (int64, error) {
 	return timestamp, nil
 }
 
-func (client *Client) post(ctx context.Context, ids []ResourceID, timestamp, nonce string) (response, error) {
-	values := make([]any, len(ids))
-	for index, id := range ids {
-		values[index] = id.value
+func (result response) code() (int, error) {
+	var code int
+	if len(result.Code) == 0 || bytes.Equal(result.Code, []byte("null")) || json.Unmarshal(result.Code, &code) != nil {
+		return 0, fmt.Errorf("%w: code 无效", ErrResponse)
 	}
-	body, err := json.Marshal(struct {
-		C struct{} `json:"c"`
-		B struct {
-			IDs []any `json:"ids"`
-		} `json:"b"`
-	}{B: struct {
-		IDs []any `json:"ids"`
-	}{IDs: values}})
+	return code, nil
+}
+
+func (client *Client) post(ctx context.Context, path string, payload any, timestamp, nonce string) (response, error) {
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return response{}, fmt.Errorf("%w: 无法编码请求", ErrRequest)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, client.portal+"/3.0/hostOpsService/loginResource", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, client.portal+path, bytes.NewReader(body))
 	if err != nil {
 		return response{}, fmt.Errorf("%w: 无法构造请求", ErrRequest)
 	}

@@ -38,6 +38,7 @@ connect：固定监听 127.0.0.1，Ctrl+C 停止并释放连接。
 
 type sessionClient interface {
 	Login(context.Context, session.ResourceID) (secdb.Params, error)
+	Activate(context.Context, string) error
 }
 
 type application struct {
@@ -243,16 +244,18 @@ func (app *application) connect(ctx context.Context, resource session.ResourceID
 	err = tunnel.Serve(ctx, listener, tunnel.Config{
 		ProxyPort: app.proxyPort,
 		Provider:  func(ctx context.Context) (secdb.Params, error) { return client.Login(ctx, resource) },
+		// 每条连接的新会话都需激活后再握手；初始会话不建隧道，无需激活。
+		Activate: func(ctx context.Context, params secdb.Params) error { return client.Activate(ctx, params.SessionID) },
 		OnEvent: func(event tunnel.Event) {
 			mutex.Lock()
 			defer mutex.Unlock()
 			if ctx.Err() != nil {
 				return
 			}
-			stage := map[tunnel.Stage]string{tunnel.StageSession: "客户端会话申请", tunnel.StageDial: "代理连接", tunnel.StageHandshake: "代理握手"}[event.Stage]
+			stage := map[tunnel.Stage]string{tunnel.StageSession: "客户端会话申请", tunnel.StageDial: "代理连接", tunnel.StageActivate: "会话激活", tunnel.StageHandshake: "代理握手"}[event.Stage]
 			if !event.Success {
 				failure = fmt.Errorf("%s失败，已停止隧道并关闭活跃连接", stage)
-				if event.Stage == tunnel.StageSession {
+				if event.Stage == tunnel.StageSession || event.Stage == tunnel.StageActivate {
 					failure = fmt.Errorf("%w；请检查 Token、资源权限、门户连接及数据库密钥", failure)
 				}
 				cancel()

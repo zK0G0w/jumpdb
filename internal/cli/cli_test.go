@@ -254,15 +254,24 @@ func TestConnectIDsCredentialsAndPerConnectionSessions(t *testing.T) {
 			}
 			params := secdb.Params{Username: "fixture-user", Password: "fixture-private-password", SessionID: "fixture-session", YxzIP: "127.0.0.1"}
 			encrypted := encodeFixture(t, params)
-			var logins atomic.Int32
+			var logins, activations atomic.Int32
 			attachPortal(t, app, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				var body struct {
 					B struct {
-						IDs []any `json:"ids"`
+						IDs       []any  `json:"ids"`
+						SessionID string `json:"sessionId"`
 					} `json:"b"`
 				}
 				if json.NewDecoder(request.Body).Decode(&body) != nil {
 					t.Error("请求格式无效")
+					return
+				}
+				if request.URL.Path == "/3.0/hostOpsService/checkSSOTool" {
+					if body.B.SessionID != params.SessionID {
+						t.Error("激活未携带本次会话 ID")
+					}
+					activations.Add(1)
+					fmt.Fprint(writer, `{"code":0,"data":{"status":1}}`)
 					return
 				}
 				if len(body.B.IDs) == 0 {
@@ -296,7 +305,7 @@ func TestConnectIDsCredentialsAndPerConnectionSessions(t *testing.T) {
 						defer workers.Done()
 						defer connection.Close()
 						connection.SetDeadline(time.Now().Add(5 * time.Second))
-						expected := "yabP" + params.SessionID + "\x04" + params.Username
+						expected := handshakeFor(params)
 						got := make([]byte, len(expected))
 						if _, err := io.ReadFull(connection, got); err != nil || string(got) != expected {
 							t.Error("代理握手不正确")
@@ -352,6 +361,9 @@ func TestConnectIDsCredentialsAndPerConnectionSessions(t *testing.T) {
 			if logins.Load() != 3 {
 				t.Fatal("不是初始申请加每客户端一次申请")
 			}
+			if activations.Load() != 2 {
+				t.Fatal("不是每个客户端连接各激活一次（初始会话不激活）")
+			}
 			if strings.Contains(output.String(), params.Password) != test.show {
 				t.Fatal("密码显式显示策略不正确")
 			}
@@ -366,7 +378,7 @@ func TestConnectIDsCredentialsAndPerConnectionSessions(t *testing.T) {
 }
 
 func TestConnectFailuresExitAndReleasePort(t *testing.T) {
-	for _, stage := range []string{"probe", "initial", "decode", "session", "dial", "handshake"} {
+	for _, stage := range []string{"probe", "initial", "decode", "session", "dial", "activate", "handshake"} {
 		t.Run(stage, func(t *testing.T) {
 			app, output, path := testApp(t)
 			if err := config.Save(path, fixtureConfig()); err != nil {
@@ -382,6 +394,14 @@ func TestConnectFailuresExitAndReleasePort(t *testing.T) {
 					} `json:"b"`
 				}
 				json.NewDecoder(request.Body).Decode(&body)
+				if request.URL.Path == "/3.0/hostOpsService/checkSSOTool" {
+					if stage == "activate" {
+						fmt.Fprint(writer, `{"code":500,"msg":"fixture-private-response"}`)
+					} else {
+						fmt.Fprint(writer, `{"code":0,"data":{"status":1}}`)
+					}
+					return
+				}
 				if len(body.B.IDs) == 0 {
 					if stage == "probe" {
 						writer.WriteHeader(http.StatusForbidden)
@@ -403,7 +423,7 @@ func TestConnectFailuresExitAndReleasePort(t *testing.T) {
 				json.NewEncoder(writer).Encode(map[string]any{"code": 0, "data": map[string]string{"db": encrypted}})
 			}))
 			app.proxyPort = availablePort(t)
-			if stage == "handshake" {
+			if stage == "activate" || stage == "handshake" {
 				proxy, err := net.Listen("tcp", "127.0.0.1:0")
 				if err != nil {
 					t.Fatal(err)
@@ -417,7 +437,7 @@ func TestConnectFailuresExitAndReleasePort(t *testing.T) {
 					}
 					defer connection.Close()
 					connection.SetDeadline(time.Now().Add(5 * time.Second))
-					handshake := make([]byte, len("yabP"+params.SessionID+"\x04"+params.Username))
+					handshake := make([]byte, len(handshakeFor(params)))
 					io.ReadFull(connection, handshake)
 					io.WriteString(connection, "failure")
 				}()
@@ -427,7 +447,7 @@ func TestConnectFailuresExitAndReleasePort(t *testing.T) {
 			port := availablePort(t)
 			done := make(chan int, 1)
 			go func() { done <- app.run(ctx, []string{"connect", "--id", "856", "--port", strconv.Itoa(port)}) }()
-			if stage == "session" || stage == "dial" || stage == "handshake" {
+			if stage == "session" || stage == "dial" || stage == "activate" || stage == "handshake" {
 				waitFor(t, func() bool { return strings.Contains(output.String(), "等待客户端") })
 				connection, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 				if err != nil {
@@ -442,7 +462,7 @@ func TestConnectFailuresExitAndReleasePort(t *testing.T) {
 			if code := <-done; code != 1 {
 				t.Fatalf("失败退出码为 %d", code)
 			}
-			want := map[string]string{"probe": "门户时间探测失败", "initial": "初始会话申请失败", "decode": "会话解码失败", "session": "客户端会话申请失败", "dial": "代理连接失败", "handshake": "代理握手失败"}[stage]
+			want := map[string]string{"probe": "门户时间探测失败", "initial": "初始会话申请失败", "decode": "会话解码失败", "session": "客户端会话申请失败", "dial": "代理连接失败", "activate": "会话激活失败", "handshake": "代理握手失败"}[stage]
 			if !strings.Contains(output.String(), want) || strings.Contains(output.String(), "fixture-private-response") {
 				t.Fatal("错误阶段缺失或泄露远端响应")
 			}
@@ -471,6 +491,13 @@ type loginFunc func(context.Context, session.ResourceID) (secdb.Params, error)
 
 func (login loginFunc) Login(ctx context.Context, id session.ResourceID) (secdb.Params, error) {
 	return login(ctx, id)
+}
+
+func (loginFunc) Activate(context.Context, string) error { return nil }
+
+// handshakeFor 按协议构造代理握手：长度字节是用户名的字节数。
+func handshakeFor(params secdb.Params) string {
+	return "yabP" + params.SessionID + string([]byte{byte(len(params.Username))}) + params.Username
 }
 
 func TestConnectionFailureStopsOtherActiveConnections(t *testing.T) {

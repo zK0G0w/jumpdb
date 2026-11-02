@@ -15,12 +15,12 @@ import (
 func TestServeForwardsAfterSplitHandshakeAndPreservesFollowingBytes(t *testing.T) {
 	proxyPort := startProxy(t, func(conn net.Conn) {
 		defer conn.Close()
-		handshake := make([]byte, len("yabPsession-1\x04alice"))
+		handshake := make([]byte, len("yabPsession-1\x05alice"))
 		if _, err := io.ReadFull(conn, handshake); err != nil {
 			t.Errorf("read handshake: %v", err)
 			return
 		}
-		if got, want := string(handshake), "yabPsession-1\x04alice"; got != want {
+		if got, want := string(handshake), "yabPsession-1\x05alice"; got != want {
 			t.Errorf("handshake = %q, want %q", got, want)
 			return
 		}
@@ -100,7 +100,7 @@ func TestServeForwardsAfterSplitHandshakeAndPreservesFollowingBytes(t *testing.T
 func TestServeCancellationClosesActiveConnectionsAndListener(t *testing.T) {
 	proxyPort := startProxy(t, func(conn net.Conn) {
 		defer conn.Close()
-		handshake := make([]byte, len("yabPsession-2\x04bob"))
+		handshake := make([]byte, len("yabPsession-2\x03bob"))
 		if _, err := io.ReadFull(conn, handshake); err != nil {
 			return
 		}
@@ -158,7 +158,7 @@ func TestServeRequestsOneSessionPerClient(t *testing.T) {
 	}
 	defer proxyListener.Close()
 	proxyPort := proxyListener.Addr().(*net.TCPAddr).Port
-	const handshake = "yabPsess\x04u"
+	const handshake = "yabPsess\x01u"
 	proxyErrors := make(chan error, 3)
 	proxyDone := make(chan struct{}, 3)
 	go func() {

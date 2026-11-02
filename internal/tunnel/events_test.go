@@ -13,7 +13,7 @@ import (
 )
 
 func TestStageEventsAndCancellation(t *testing.T) {
-	for _, stage := range []tunnel.Stage{tunnel.StageSession, tunnel.StageDial, tunnel.StageHandshake} {
+	for _, stage := range []tunnel.Stage{tunnel.StageSession, tunnel.StageDial, tunnel.StageActivate, tunnel.StageHandshake} {
 		t.Run(string(stage), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -51,6 +51,12 @@ func TestStageEventsAndCancellation(t *testing.T) {
 							return secdb.Params{}, errors.New("fixture-private-error")
 						}
 						return secdb.Params{YxzIP: "127.0.0.1", SessionID: "fixture", Username: "user"}, nil
+					},
+					Activate: func(context.Context, secdb.Params) error {
+						if stage == tunnel.StageActivate {
+							return errors.New("fixture-private-error")
+						}
+						return nil
 					},
 					OnEvent: func(event tunnel.Event) {
 						events <- event
