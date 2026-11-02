@@ -71,6 +71,7 @@ func TestArgumentsAndNonInteractiveInput(t *testing.T) {
 		{"connect", "--id", "856", "--port", "0"}, {"connect", "--id", "856", "--port", "65536"},
 		{"connect", "--id", "856", "--port", "fixture-token"}, {"connect", "--id", "856", "--id-type", "bad"},
 		{"connect", "--id", "9223372036854775808"}, {"connect", "--id", "abc", "--id-type", "number"},
+		{"ui", "fixture-token"}, {"ui", "--port", "9011"},
 	} {
 		app, output, _ := testApp(t)
 		if code := app.run(context.Background(), args); code != 2 {
@@ -590,4 +591,65 @@ func TestConnectionFailureStopsOtherActiveConnections(t *testing.T) {
 		t.Fatal("泄露 Provider 原始错误")
 	}
 	assertReleased(t, port)
+}
+
+func TestUICommandPrintsTokenAddressAndStopsOnCancel(t *testing.T) {
+	for _, noOpen := range []bool{false, true} {
+		app, output, path := testApp(t)
+		if err := config.Save(path, fixtureConfig()); err != nil {
+			t.Fatal(err)
+		}
+		opened := make(chan string, 1)
+		app.openBrowser = func(address string) error {
+			opened <- address
+			return nil
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		args := []string{"ui"}
+		if noOpen {
+			args = append(args, "--no-open")
+		}
+		done := make(chan int, 1)
+		go func() { done <- app.run(ctx, args) }()
+		waitFor(t, func() bool { return strings.Contains(output.String(), "请勿分享") })
+		var address string
+		for _, line := range strings.Split(output.String(), "\n") {
+			if value, ok := strings.CutPrefix(line, "控制页："); ok {
+				address = value
+			}
+		}
+		if !strings.HasPrefix(address, "http://127.0.0.1:") || !strings.Contains(address, "token=") {
+			t.Fatal("控制页地址不正确")
+		}
+		select {
+		case got := <-opened:
+			if noOpen || got != address {
+				t.Fatal("浏览器打开策略不正确")
+			}
+		default:
+			if !noOpen {
+				t.Fatal("未自动打开浏览器")
+			}
+		}
+		response, err := http.Get(address)
+		if err != nil || response.StatusCode != http.StatusOK {
+			t.Fatal("控制页不可访问")
+		}
+		response.Body.Close()
+		cancel()
+		select {
+		case code := <-done:
+			if code != 0 {
+				t.Fatal("取消后退出码不正确")
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("取消未停止控制页")
+		}
+		if _, err := http.Get(address); err == nil {
+			t.Fatal("退出后控制页仍可访问")
+		}
+		if strings.Contains(output.String(), fixtureConfig().Token) {
+			t.Fatal("输出泄露 Token")
+		}
+	}
 }

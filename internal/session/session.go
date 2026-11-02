@@ -294,3 +294,23 @@ func (client *Client) post(ctx context.Context, path string, payload any, timest
 	}
 	return result, nil
 }
+
+// Describe 将门户请求错误映射为不含 Token、响应原文或网络细节的中文诊断提示。
+func Describe(err error) string {
+	switch {
+	case errors.Is(err, ErrTLS):
+		return "TLS 证书校验失败，请检查证书链、主机名及有效期"
+	case errors.Is(err, ErrBusiness):
+		return "门户拒绝请求，请检查 Token、资源 ID 和权限；不会自动续期或重试"
+	case errors.Is(err, ErrHTTP):
+		return "HTTP 状态错误，请检查门户可用性及授权"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "请求超时"
+	case errors.Is(err, secdb.ErrDecrypt), errors.Is(err, secdb.ErrFormat), errors.Is(err, secdb.ErrPayload):
+		return "会话解码失败，请检查数据库密钥及响应格式"
+	case errors.Is(err, ErrResponse):
+		return "门户响应格式无效"
+	default:
+		return "请求失败，请检查网络及本地配置"
+	}
+}
