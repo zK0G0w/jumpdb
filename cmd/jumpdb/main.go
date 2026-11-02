@@ -1,14 +1,18 @@
 // Command jumpdb 申请数据库运维会话，并为本地数据库客户端提供 TCP 隧道。
-//
-// 目前处于开发阶段，命令尚未实现。
 package main
 
 import (
-	"fmt"
+	"context"
 	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/zK0G0w/jumpdb/internal/cli"
 )
 
 func main() {
-	fmt.Fprintln(os.Stderr, "jumpdb: 开发中，命令尚未实现")
-	os.Exit(1)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := cli.Run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
+	stop()
+	os.Exit(code)
 }

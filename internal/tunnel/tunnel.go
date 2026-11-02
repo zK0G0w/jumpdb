@@ -23,11 +23,28 @@ const (
 // Provider 为每个本地客户端连接申请一次新的代理会话。
 type Provider func(context.Context) (secdb.Params, error)
 
+// Stage 是单连接建立过程中可观测的阶段，不携带凭据或远端地址。
+type Stage string
+
+const (
+	StageSession   Stage = "session"
+	StageDial      Stage = "dial"
+	StageHandshake Stage = "handshake"
+)
+
+// Event 表示某阶段的结果；主动取消不报告为失败。
+type Event struct {
+	Stage   Stage
+	Success bool
+}
+
 // Config 描述本地隧道的代理端口、会话申请器和握手超时。
 type Config struct {
 	ProxyPort        int
 	HandshakeTimeout time.Duration
 	Provider         Provider
+	// OnEvent 可被不同连接并发调用，应及时返回；不传递原始错误以免泄露凭据。
+	OnEvent func(Event)
 }
 
 // Serve 接受本地客户端连接，并将每条连接转发到对应的代理会话。
@@ -55,6 +72,8 @@ func Serve(ctx context.Context, listener net.Listener, cfg Config) error {
 		return errors.New("tunnel: invalid handshake timeout")
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	s := &server{ctx: ctx, listener: listener, cfg: cfg, conns: make(map[net.Conn]struct{})}
 	watcherDone := make(chan struct{})
 	go s.watchCancellation(watcherDone)
@@ -65,6 +84,8 @@ func Serve(ctx context.Context, listener net.Listener, cfg Config) error {
 			if ctx.Err() != nil {
 				break
 			}
+			cancel()
+			_ = listener.Close()
 			s.closeAll()
 			close(watcherDone)
 			s.wg.Wait()
@@ -105,6 +126,11 @@ func (s *server) watchCancellation(done <-chan struct{}) {
 
 func (s *server) add(conn net.Conn) {
 	s.mu.Lock()
+	if s.ctx.Err() != nil {
+		s.mu.Unlock()
+		_ = conn.Close()
+		return
+	}
 	s.conns[conn] = struct{}{}
 	s.mu.Unlock()
 }
@@ -132,15 +158,21 @@ func (s *server) handle(client net.Conn) {
 		s.remove(client)
 		_ = client.Close()
 	}()
-
-	params, err := s.cfg.Provider(s.ctx)
-	if err != nil || params.YxzIP == "" || params.SessionID == "" || params.Username == "" {
+	if s.ctx.Err() != nil {
 		return
 	}
 
-	dialer := net.Dialer{}
+	params, err := s.cfg.Provider(s.ctx)
+	if err != nil || params.YxzIP == "" || params.SessionID == "" || params.Username == "" {
+		s.report(StageSession, false)
+		return
+	}
+	s.report(StageSession, true)
+
+	dialer := net.Dialer{Timeout: s.cfg.HandshakeTimeout}
 	proxy, err := dialer.DialContext(s.ctx, "tcp", net.JoinHostPort(params.YxzIP, strconv.Itoa(s.cfg.ProxyPort)))
 	if err != nil {
+		s.report(StageDial, false)
 		return
 	}
 	s.add(proxy)
@@ -148,10 +180,13 @@ func (s *server) handle(client net.Conn) {
 		s.remove(proxy)
 		_ = proxy.Close()
 	}()
+	s.report(StageDial, true)
 
 	if err := s.handshake(proxy, params); err != nil {
+		s.report(StageHandshake, false)
 		return
 	}
+	s.report(StageHandshake, true)
 
 	proxyReader := bufio.NewReader(proxy)
 	copyDone := make(chan struct{}, 2)
@@ -167,6 +202,12 @@ func (s *server) handle(client net.Conn) {
 	_ = client.Close()
 	_ = proxy.Close()
 	<-copyDone
+}
+
+func (s *server) report(stage Stage, success bool) {
+	if s.cfg.OnEvent != nil && s.ctx.Err() == nil {
+		s.cfg.OnEvent(Event{Stage: stage, Success: success})
+	}
 }
 
 func (s *server) handshake(proxy net.Conn, params secdb.Params) error {
