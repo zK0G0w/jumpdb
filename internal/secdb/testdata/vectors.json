@@ -1,0 +1,229 @@
+{
+  "note": "由 scripts/gen_secdb_vectors.py 生成，已经旧版 Python 实现解密校验；仅含合成密钥和合成数据",
+  "keys": {
+    "trans": "TestTransKey0001",
+    "db": "TestDbKey0000002"
+  },
+  "cases": [
+    {
+      "name": "db_type_number",
+      "format": "dbfield",
+      "input": "IwUP1FZz0EC3VdQ47YX04pZHfMNFOG+OELTCVB4rX6rvA9CbY/6/XKcFDemkLBRmXf73zkMYVpjh8u9D+crl3tQU40zL8/6m2Iq/46NuIjDkNGSAwNwNxYiSlsgR2WyeHWokcYKTbInK5qMQ8hXdhXyqaKWGrGXHfZKvL2MB5zwCypvQRzpJD3t98dPFCfWyWj0zjvlqibRfJhhOyqp5uqkLrd605bEH/tgbOdPG9dlEZ+hZdvkLnxFLE+N3qqGEk7A5dBG6JLqMpGv6",
+      "expect": {
+        "type": "MySQL",
+        "dbIp": "198.51.100.5",
+        "dbPort": 3306,
+        "username": "测试用户",
+        "password": "p@ss-中文",
+        "dbname": "订单库",
+        "yxzIp": "192.0.2.10",
+        "sessionId": "sess-0001",
+        "extraKeys": []
+      }
+    },
+    {
+      "name": "db_type_string_port_string_extra",
+      "format": "dbfield",
+      "input": "LNJAC6tIvrxlhDWa3PcMl3PkBO0LZIziNYiBpR7ZH5UO3I+T8bnNopLloWKjPKwST9+0WGk1jHOqgf2S6I6pWX/xE6ZrCW5admcjejtHXlVN+uaeYu3jLxZOiLZ3TqXJu7yU1/3ze9L6Jd9kBYp8vust2F+Q4EV0/ZvZ8HbdM+iFLRpaPxTETY5n5cf+73TZp/f9wfXuLHDkpbDy8mTWvy2RaRQHe7ZG4/VgDDTOWuVlL44nwEx40UkOwAUZxNzpnftBcn/E4mAc/k9wubW6pEnEWYIKKXo5S5PBvA==",
+      "expect": {
+        "type": "MySQL",
+        "dbIp": "198.51.100.6",
+        "dbPort": 3307,
+        "username": "u2",
+        "password": "pw2",
+        "dbname": "",
+        "yxzIp": "192.0.2.11",
+        "sessionId": "sess-0002",
+        "extraKeys": [
+          "oracleRole",
+          "备注"
+        ]
+      }
+    },
+    {
+      "name": "db_service_type_fallback_no_port",
+      "format": "dbfield",
+      "input": "UipP9C+UgwfXtvm/sr3RzLd4klBgL1Vjge/bGTBSrMkFiHuel4+KCbPdVSupfcfOLxTeiOmQ5wHWSS8XPPrG4ee2GZJlzosFuJWO426YLqSqVHGlItoxcqwazhHudV8itDHQ6Y3IiW9MPGgQ2Ay1/6CD1f82+vyxSBmA7n47NewMAwFHGk+He9/JpZOOhLBqXafxKFKZZlvnvvehkY4ceBur0lLNpQVbbQDRTg==",
+      "expect": {
+        "type": "PostgreSQL",
+        "dbIp": "198.51.100.7",
+        "dbPort": 0,
+        "username": "pg用户",
+        "password": "pw3",
+        "dbname": "",
+        "yxzIp": "192.0.2.12",
+        "sessionId": "sess-0003",
+        "extraKeys": []
+      }
+    },
+    {
+      "name": "db_unknown_type_number",
+      "format": "dbfield",
+      "input": "1ihAimLUPWWh7GFMhSg6//ILTHbhAceQKMLOienLh/UtAaNcoH1j/Oof6O+UmmZeIFt3imnsyf4w0IH9a6MXCJk2VPPrjkoAoF7SL3ZArl6d50lnNcGTnmkewRKyNjgL+TJ/6NzfUlKipJNR3flosFNHVdXlXhN1/kLnZb1WewZ3PqEfIiPnnHJY+0wxe9RcsHZI6j57WiXJ4tW6",
+      "expect": {
+        "type": "type=99",
+        "dbIp": "198.51.100.8",
+        "dbPort": 1521,
+        "username": "未知",
+        "password": "pw4",
+        "dbname": "",
+        "yxzIp": "192.0.2.13",
+        "sessionId": "sess-0004",
+        "extraKeys": []
+      }
+    },
+    {
+      "name": "db_type_sqlserver_number",
+      "format": "dbfield",
+      "input": "NRcXWqXUvpBPlz+w4wFvqQl1flnzEu9IOgMSb8IbT04CCuCTT4gn5qlJaynA4eYgcAIcOZO1laoMeAmqnmoM3F2N3L5GV0xHwb2M/rMPhBzKdW63OhBxQviI6adia94Ie/2MyTKrftAooX1Tr2LrvxSqeq9tMbgmaApcMV/1PiOnG8J/a5MeW9TIp7Ilf7Hc4bSdV/imMxBadYle",
+      "expect": {
+        "type": "SQL Server",
+        "dbIp": "198.51.100.9",
+        "dbPort": 1433,
+        "username": "sa用户",
+        "password": "pw5",
+        "dbname": "",
+        "yxzIp": "192.0.2.14",
+        "sessionId": "sess-0005",
+        "extraKeys": []
+      }
+    },
+    {
+      "name": "sso_header_scheme",
+      "format": "ssosecdb",
+      "input": "ssosecdb://DKWAos5tTi5g+dBpZnrwPwwcRSfkozrfAl4zJnmprSqzOVYMR4S+2CB/PBPhsrzAg2CFhWmHXbBu9N5VsndYVAAT6Tm7luQh0tcrlXpNTVJrNpKgpkzBRqsbryUkHsLhLEd4AGOI88x3kJBFYCJvcBB0jOWbS48kgGQvclHM9sVXpBTPjlJFoJxRI0MkJWhJKZkjyhJZaTjB8g74Pktpm+Y8A67FWuBJzyh5wGMZkC+39K/GSthQa/l3lgNISgJWyPmmN7JERH+63NpwhMzzCORpQYxYjb7ZQ68V5qmsauPQiQsaBtwFnI4EfkXJyI7AJdbQG6t7QtnI6yybIyiEQad2aYdYADZtOJHRhqUnNn28Tdn+QjgDAePMWf5w9QwZJczVVaZ/i9ml7jqts/15qvchZdqtdCjXZ+CKBo06Us2Y9v9AyVT24kcxYQej89uNxn0lIXKSjXGo9U9Q/",
+      "consumed": "db",
+      "expect": {
+        "type": "MySQL",
+        "dbIp": "198.51.100.21",
+        "dbPort": 3306,
+        "username": "内层用户1",
+        "password": "inner-pw-1",
+        "dbname": "",
+        "yxzIp": "192.0.2.21",
+        "sessionId": "inner-sess-1",
+        "extraKeys": [
+          "action",
+          "webPort"
+        ]
+      }
+    },
+    {
+      "name": "sso_header_double_slash",
+      "format": "ssosecdb",
+      "input": "ssosecdb//H4sGu7rpSA3GfcwgkTqdZM7XDWItA7jSVBftG4ZmCFOgRFN7gOZNmODBhjWJzHNZWgNeJF9fD0ZsRN9s/5LSa4B2GmkEIge0VHReds2BF+COGXhEHQBfc81NO6FXZYfq9klEtm2gJ8lOlyOkBMw1a5x8cq0X0sk/YNXERQUy4a/fOLy8pRJdhhww6HZ8vYZOJn/Hcuy5/vjYFDA7GQ82QnDcORg2LcqR+c8GBHGwN63QsIxliazJ88urL2BNYqDyTWeq3Ywy4y2SZyZQuzv0ZzZczWn7NKhdEbGxfoCAwzaPf/I46i0i6kFPFw7rkAyC2eMCK0QNPycWJDFGQD9ISKz5dtf9YWagPffzvfTYHHUm0nWEIT+7qhvtTlHnNtdBa87X7hmg290vo7AuPvEJZDYfSQq0VZDQBTPxn3VhdCYsQgGdwSzDPtuUwr1ob7PSDjahwHaK9uh5AecP/",
+      "consumed": "db",
+      "expect": {
+        "type": "MySQL",
+        "dbIp": "198.51.100.22",
+        "dbPort": 3306,
+        "username": "内层用户2",
+        "password": "inner-pw-2",
+        "dbname": "",
+        "yxzIp": "192.0.2.22",
+        "sessionId": "inner-sess-2",
+        "extraKeys": [
+          "action",
+          "webPort"
+        ]
+      }
+    },
+    {
+      "name": "sso_no_header",
+      "format": "ssosecdb",
+      "input": "JkY3P2QWCTWseeEm4bzz03N20RQu+8nXrBOHHUZmKntW+PauzCkycpnJdiTG01f9sFICRHIVlD1Bmr/rzWWKrxf1rbW9KiE4LGwcgVG6lGcn/HndgcJwFW/x5hSznxmMUZzo7dpFrodh9CeSmENKFMS4Bz+ix27GAsGtGE61M/M2wjRj2hMtu+3s0kdFDHyN3/pP6XFm1cF+35e/jYk91eZE0qG6nQRTvw45sLcuCBNFaYhjNN2qrCqttWvbaA5oV4AvPgmSMKdMYALUJmdaugGAadu8Kc32T+d+RfiyyOqncpS+1NCsPoQxH7O0/mD0O1CMpdTCGxnhqyk7OdB12L4uXufMjFtkLpi6Efa3t7WTLIcGcTZuopHWVPKJYSD1roOXgfHHYLWDBOucpBN5bOKEYfLOaro8fPCrUYlCXOfOYSZfbCRVhfV3HMS253Yv/X9KKSKQSTVDnpBn",
+      "consumed": "db",
+      "expect": {
+        "type": "MySQL",
+        "dbIp": "198.51.100.23",
+        "dbPort": 3306,
+        "username": "内层用户3",
+        "password": "inner-pw-3",
+        "dbname": "",
+        "yxzIp": "192.0.2.23",
+        "sessionId": "inner-sess-3",
+        "extraKeys": [
+          "action",
+          "webPort"
+        ]
+      }
+    },
+    {
+      "name": "sso_action_ad",
+      "format": "ssosecdb",
+      "input": "ssosecdb//y0YqnZerk9PmpD6rE0qRAuhiX2j5RMwVlMM6SJsUarFh9TK20KldX1Y5dlLjSdTqffSRiEOfYWsfHHin/",
+      "expect": {
+        "type": "",
+        "dbIp": "",
+        "dbPort": 0,
+        "username": "",
+        "password": "",
+        "dbname": "",
+        "yxzIp": "",
+        "sessionId": "",
+        "extraKeys": [
+          "action",
+          "msg"
+        ]
+      }
+    },
+    {
+      "name": "sso_action_missing",
+      "format": "ssosecdb",
+      "input": "ssosecdb//4c4sNQH7UvwirzDjqeGbvLeA2/nFyUqf5fVNN1+Lpy/IiqEch+mMV7ehhLE/8x/m+2GtQKIqpEp3Ir2Y/",
+      "expect": {
+        "type": "",
+        "dbIp": "",
+        "dbPort": 0,
+        "username": "外层用户",
+        "password": "",
+        "dbname": "",
+        "yxzIp": "",
+        "sessionId": "",
+        "extraKeys": [
+          "foo"
+        ]
+      }
+    },
+    {
+      "name": "sso_fallback_candidate",
+      "format": "ssosecdb",
+      "input": "ssosecdb//UdYw3co3QeSzReBH4VbKja11LQ4cuE+LuVfBopK8LVZ16avJRa9Cc4N47im0x8LU7pOYY44iy3O3MAnMUU16gq/xK7YMmkoaoIwRIM/aNA0Es+uVMU4NrWfapVP6kX68bdZNA2QJGaaQmjzaNZmjpKp1NRtWDIgp2PRHMI33bWECZUivwgFRh8shjii9RPz5lCTBDkLx9EWQl4BwIWYX9OrnVVICPVzDGDudz9azSS6oEo8TJgmVbrfxI++TZQJ5GiyV07VtW7s+uP/hZ0csJ7Gp7bksYr+qnP03tR+fgeU7zJYF6WxP7Sl5qFmwKZTa95M1VSm1SPvHZn6C/R/nZ7XJzWaksDSKlX9bSPFILxIkzhXhAgV7hvta9L6Okzxbf3FiVxtvNcXoicWEv+8Ecuf4B4QXRTSAi4qyqJP4pdldYdASJdyWm8rrJObsdgeo55eMmElfN1z3rBnX7p1ziJHmuR026M1yFbCfKg==/",
+      "consumed": "payload",
+      "expect": {
+        "type": "MySQL",
+        "dbIp": "198.51.100.30",
+        "dbPort": 3306,
+        "username": "兜底用户",
+        "password": "fallback-pw",
+        "dbname": "",
+        "yxzIp": "192.0.2.30",
+        "sessionId": "fb-sess",
+        "extraKeys": [
+          "action",
+          "db",
+          "trace"
+        ]
+      }
+    },
+    {
+      "name": "sso_action_null",
+      "format": "ssosecdb",
+      "input": "ssosecdb//bdKf43u5PVLGvDVwq6mIqCDlZstugvI79Sry3mPOmbWM1UFc9esiyJzVu3umCiyRVBOcofK18lLDy6PlCGUqG0k4dsVDAMAhUHZ+ncrR/cpToMJqznRRAoCIK64QS4Dem7GrunRJ4+wLiNroUxaWvAXq4x6M8phxZblU4g==/",
+      "expect": {
+        "type": "",
+        "dbIp": "",
+        "dbPort": 0,
+        "username": "空动作用户",
+        "password": "",
+        "dbname": "",
+        "yxzIp": "",
+        "sessionId": "",
+        "extraKeys": [
+          "",
+          "action"
+        ]
+      }
+    }
+  ]
+}

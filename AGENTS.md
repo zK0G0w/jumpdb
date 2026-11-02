@@ -4,7 +4,7 @@
 
 将现有 Python 版堡垒机数据库登录工具重写为轻量 Go CLI：复用用户在网页取得的授权 Token，申请数据库运维会话，解密连接参数，并提供客户端无关的本地 TCP 隧道，供 DBX、Navicat、DBeaver、DataGrip 或 `mysql` 命令行等兼容目标数据库协议的客户端使用。
 
-- 项目名和命令名统一为 `jumpdb`；用户已选择 Go CLI 方向，当前仓库尚未实现程序。
+- 项目名和命令名统一为 `jumpdb`；用户已选择 Go CLI 方向。已实现 `internal/secdb`（连接参数解码）；会话申请、隧道、配置和 CLI 尚未实现，`cmd/jumpdb` 仍是占位入口。
 - 首版完整覆盖现有 MySQL 主流程；运行时不依赖 Python、Windows 客户端或外部脚本。
 - 客户端不限定品牌，不依赖 Navicat 或 DBX 的私有接口。客户端使用隧道输出的本地主机、端口及账号信息；多客户端兼容不等于多数据库类型支持，具体驱动、认证及 TLS 兼容性以实测为准。
 - macOS 分别提供 `darwin/arm64`、`darwin/amd64` 可执行文件。首版不做 GUI、DMG、自动更新、后台常驻服务或浏览器协议注册。
@@ -52,7 +52,7 @@ jumpdb connect --id RESOURCE_ID --port 9012
 ## 协议与实现约束
 
 1. **会话申请**：目标门户地址来自用户本地配置（真实值与旧源码 `BASE` 一致，但不写入本仓库）；请求为 `POST /3.0/hostOpsService/loginResource`，请求体结构为 `{"c":{},"b":{"ids":[资源ID]}}`。保留数字／字符串 ID 的语义，携带 `YAB_AUTH_TOKEN` Cookie、校准后的毫秒时间戳和 nonce。具体算法及错误码按源码核对，避免凭经验重写。
-2. **解密**：使用 AES-128-CBC、PKCS7；正确还原 IV 和 Base64 密文。严格检查长度及 padding，错误可诊断但不泄露密钥、密文解出的口令或 Token。保留 HTTP 响应与 `ssosecdb` 格式的解析兼容性，不因此额外扩展 CLI 功能。
+2. **解密**：使用 AES-128-CBC、PKCS7；正确还原 IV 和 Base64 密文。严格检查长度及 padding，错误可诊断但不泄露密钥、密文解出的口令或 Token。保留 HTTP 响应与 `ssosecdb` 格式的解析兼容性，不因此额外扩展 CLI 功能。已在 `internal/secdb` 实现，与旧版的有意差异写在 `DecodeSSOSecDB` 文档注释和 `scripts/gen_secdb_vectors.py` 中；兼容性向量由该脚本生成，须先经旧 Python 实现校验，venv 建在 `/tmp`，用 `python -I -B` 运行，不在旧目录写入文件。
 3. **会话刷新**：每个客户端 TCP 连接重新调用 `loginResource`，使用该次返回的 `yxzIp`、`sessionId`、用户名建立代理连接。此行为不等于 Token 自动续期，也不保证已有连接永不过期。
 4. **代理握手**：现有主路径连接 `yxzIp:33306`，发送 `b"yabP" + sessionId + b"\x04" + username`，收到 `success` 后双向转发。处理 TCP 分片和粘包；不能假设一次读取就是完整响应，也不能吞掉后续数据库协议字节。
 5. **转发与退出**：连接及握手可设超时，进入转发前清除握手期限；正常空闲及长查询不因固定的短超时被切断。统一管理监听器、活跃 socket 和取消信号，保证停止后资源释放。
@@ -66,6 +66,7 @@ jumpdb connect --id RESOURCE_ID --port 9012
 - **源码确定**：`ssotool_mac.py` 旧 `--tunnel` 调用传入结果字典，当前 `local_agent.start_tunnel()` 要求会话回调，且位置参数含义已改变。它不是有效的移植参考入口。
 - **源码确定**：旧版会把口令、会话等信息输出到终端并写入剪贴板；新版本改为显式查看／复制，不延续自动泄露行为。
 - **此前验证过**：合成 HTTP 响应解密、双层 `ssosecdb` 解密、纯本机代理握手及双向字节转发。
+- **Go 版已验证**：`internal/secdb` 在 12 条合成向量上与旧 Python 实现逐字段一致（含 `render()` 的类型名），并有错误分类、防泄露和参数首尾 `/` 的测试；尚未用真实门户响应验证。
 - **尚未验证**：真实门户申请会话、真实代理，以及 DBX、Navicat 等客户端的真实登录。旧 README 声称 MySQL 已实测，不代表本项目 agent 已完成该验证；其他数据库仅有类型映射，不构成支持证据。
 
 ## 实施顺序与完成标准
