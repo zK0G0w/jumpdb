@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zK0G0w/jumpdb/internal/secdb"
@@ -31,12 +32,44 @@ const (
 	StageDial      Stage = "dial"
 	StageActivate  Stage = "activate"
 	StageHandshake Stage = "handshake"
+	// StageClosed 只在已进入转发的连接结束时报告，Success 恒为 true，由 Reason 说明结束原因。
+	StageClosed Stage = "closed"
 )
 
-// Event 表示某阶段的结果；主动取消不报告为失败。
+// CloseReason 说明已转发连接的结束原因；不区分正常关闭与网络错误。
+type CloseReason string
+
+const (
+	ReasonClient   CloseReason = "client"
+	ReasonUpstream CloseReason = "upstream"
+	ReasonStopped  CloseReason = "stopped"
+)
+
+// Traffic 记录单个连接已转发的字节数，可在转发期间并发读取。
+type Traffic struct {
+	up   atomic.Int64
+	down atomic.Int64
+}
+
+// Up 返回从本地客户端发往代理的字节数。
+func (traffic *Traffic) Up() int64 { return traffic.up.Load() }
+
+// Down 返回从代理发往本地客户端的字节数，含握手后紧随的数据库字节。
+func (traffic *Traffic) Down() int64 { return traffic.down.Load() }
+
+// Event 表示某连接某阶段的结果；主动取消不报告为失败。
 type Event struct {
 	Stage   Stage
 	Success bool
+	// Conn 是本次 Serve 内从 1 递增的连接序号，用于关联同一连接的多个事件。
+	Conn uint64
+	// Accepted 是该连接被接入的时间，Time 是本事件发生的时间。
+	Accepted time.Time
+	Time     time.Time
+	// Traffic 仅在握手成功及 StageClosed 事件中非空，前者可用于观察实时字节数。
+	Traffic *Traffic
+	// Reason 仅在 StageClosed 事件中有效。
+	Reason CloseReason
 }
 
 // Config 描述本地隧道的代理端口、会话申请器、会话激活和握手超时。
@@ -48,6 +81,7 @@ type Config struct {
 	// 部分资源要求会话先激活，且激活与握手的间隔须尽量短。
 	Activate func(context.Context, secdb.Params) error
 	// OnEvent 可被不同连接并发调用，应及时返回；不传递原始错误以免泄露凭据。
+	// 所有调用都在 Serve 返回前完成。
 	OnEvent func(Event)
 }
 
@@ -97,9 +131,10 @@ func Serve(ctx context.Context, listener net.Listener, cfg Config) error {
 		}
 		s.add(conn)
 		s.wg.Add(1)
+		info := connInfo{id: s.next.Add(1), accepted: time.Now()}
 		go func() {
 			defer s.wg.Done()
-			s.handle(conn)
+			s.handle(conn, info)
 		}()
 	}
 
@@ -117,6 +152,13 @@ type server struct {
 	mu    sync.Mutex
 	conns map[net.Conn]struct{}
 	wg    sync.WaitGroup
+	next  atomic.Uint64
+}
+
+// connInfo 标识单个本地客户端连接，随该连接的所有事件一并报告。
+type connInfo struct {
+	id       uint64
+	accepted time.Time
 }
 
 func (s *server) watchCancellation(done <-chan struct{}) {
@@ -157,7 +199,7 @@ func (s *server) closeAll() {
 	}
 }
 
-func (s *server) handle(client net.Conn) {
+func (s *server) handle(client net.Conn, info connInfo) {
 	defer func() {
 		s.remove(client)
 		_ = client.Close()
@@ -168,15 +210,15 @@ func (s *server) handle(client net.Conn) {
 
 	params, err := s.cfg.Provider(s.ctx)
 	if err != nil || params.YxzIP == "" || params.SessionID == "" || params.Username == "" {
-		s.report(StageSession, false)
+		s.report(info, StageSession, false, nil)
 		return
 	}
-	s.report(StageSession, true)
+	s.report(info, StageSession, true, nil)
 
 	dialer := net.Dialer{Timeout: s.cfg.HandshakeTimeout}
 	proxy, err := dialer.DialContext(s.ctx, "tcp", net.JoinHostPort(params.YxzIP, strconv.Itoa(s.cfg.ProxyPort)))
 	if err != nil {
-		s.report(StageDial, false)
+		s.report(info, StageDial, false, nil)
 		return
 	}
 	s.add(proxy)
@@ -184,41 +226,50 @@ func (s *server) handle(client net.Conn) {
 		s.remove(proxy)
 		_ = proxy.Close()
 	}()
-	s.report(StageDial, true)
+	s.report(info, StageDial, true, nil)
 
 	if s.cfg.Activate != nil {
 		if err := s.cfg.Activate(s.ctx, params); err != nil {
-			s.report(StageActivate, false)
+			s.report(info, StageActivate, false, nil)
 			return
 		}
-		s.report(StageActivate, true)
+		s.report(info, StageActivate, true, nil)
 	}
 
 	if err := s.handshake(proxy, params); err != nil {
-		s.report(StageHandshake, false)
+		s.report(info, StageHandshake, false, nil)
 		return
 	}
-	s.report(StageHandshake, true)
+	traffic := &Traffic{}
+	s.report(info, StageHandshake, true, traffic)
 
 	proxyReader := bufio.NewReader(proxy)
-	copyDone := make(chan struct{}, 2)
+	copyDone := make(chan CloseReason, 2)
 	go func() {
-		copyDirection(client, proxyReader)
-		copyDone <- struct{}{}
+		copyDirection(client, &traffic.down, proxyReader)
+		copyDone <- ReasonUpstream
 	}()
 	go func() {
-		copyDirection(proxy, client)
-		copyDone <- struct{}{}
+		copyDirection(proxy, &traffic.up, client)
+		copyDone <- ReasonClient
 	}()
-	<-copyDone
+	// 先结束的方向即关闭方；停止隧道会关闭两端，此时归为主动停止。
+	reason := <-copyDone
+	if s.ctx.Err() != nil {
+		reason = ReasonStopped
+	}
 	_ = client.Close()
 	_ = proxy.Close()
 	<-copyDone
+	if s.cfg.OnEvent != nil {
+		// 主动停止也要报告，调用方需要知道连接已在 Serve 返回前结束。
+		s.cfg.OnEvent(Event{Stage: StageClosed, Success: true, Conn: info.id, Accepted: info.accepted, Time: time.Now(), Traffic: traffic, Reason: reason})
+	}
 }
 
-func (s *server) report(stage Stage, success bool) {
+func (s *server) report(info connInfo, stage Stage, success bool, traffic *Traffic) {
 	if s.cfg.OnEvent != nil && s.ctx.Err() == nil {
-		s.cfg.OnEvent(Event{Stage: stage, Success: success})
+		s.cfg.OnEvent(Event{Stage: stage, Success: success, Conn: info.id, Accepted: info.accepted, Time: time.Now(), Traffic: traffic})
 	}
 }
 
@@ -246,10 +297,22 @@ func (s *server) handshake(proxy net.Conn, params secdb.Params) error {
 	return proxy.SetDeadline(time.Time{})
 }
 
-func copyDirection(dst net.Conn, reader io.Reader) {
-	_, _ = io.Copy(dst, reader)
+func copyDirection(dst net.Conn, counter *atomic.Int64, reader io.Reader) {
+	_, _ = io.Copy(countingWriter{writer: dst, counter: counter}, reader)
 	if halfCloser, ok := dst.(interface{ CloseWrite() error }); ok {
 		_ = halfCloser.CloseWrite()
 	}
 
+}
+
+// countingWriter 统计实际写出的字节数，供转发期间实时读取。
+type countingWriter struct {
+	writer  io.Writer
+	counter *atomic.Int64
+}
+
+func (w countingWriter) Write(buffer []byte) (int, error) {
+	n, err := w.writer.Write(buffer)
+	w.counter.Add(int64(n))
+	return n, err
 }

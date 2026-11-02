@@ -252,7 +252,11 @@ func (app *application) connect(ctx context.Context, resource session.ResourceID
 			if ctx.Err() != nil {
 				return
 			}
-			stage := map[tunnel.Stage]string{tunnel.StageSession: "客户端会话申请", tunnel.StageDial: "代理连接", tunnel.StageActivate: "会话激活", tunnel.StageHandshake: "代理握手"}[event.Stage]
+			// 终端只报告连接建立的各阶段；连接结束等观测事件留给 Web 控制页。
+			stage, ok := map[tunnel.Stage]string{tunnel.StageSession: "客户端会话申请", tunnel.StageDial: "代理连接", tunnel.StageActivate: "会话激活", tunnel.StageHandshake: "代理握手"}[event.Stage]
+			if !ok {
+				return
+			}
 			if !event.Success {
 				failure = fmt.Errorf("%s失败，已停止隧道并关闭活跃连接", stage)
 				if event.Stage == tunnel.StageSession || event.Stage == tunnel.StageActivate {
