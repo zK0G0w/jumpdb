@@ -1,0 +1,14 @@
+# 构建产物
+/jumpdb
+/dist/
+*.test
+*.out
+
+# 本地环境
+.DS_Store
+.idea/
+.vscode/
+
+# 防止误提交本地配置和真实样本（含 Token、密钥或会话数据）
+*.local.json
+/testdata/real/
