@@ -1,5 +1,6 @@
 """仅用临时 HOME、合成凭据和回环服务验证构建后的 macOS CLI。"""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -204,6 +205,147 @@ def check_ui(binary, home):
             process.wait()
 
 
+INSTALL_SCRIPT = Path(__file__).resolve().parent / "install.sh"
+RELEASES_PREFIX = "https://github.com/zK0G0w/jumpdb/releases/"
+
+# 假 curl 只按发布地址从本地目录取文件，不访问网络；生产脚本因此无需可改下载来源的开关。
+FAKE_CURL = """#!/bin/sh
+output=
+url=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) output=$2; shift 2 ;;
+    --proto) shift 2 ;;
+    -*) shift ;;
+    *) url=$1; shift ;;
+  esac
+done
+echo "$url" >> "$FAKE_CURL_LOG"
+case "$url" in
+  {prefix}latest/download/*) source="$FAKE_RELEASES/latest/${{url##*/}}" ;;
+  {prefix}download/*) rest=${{url#{prefix}download/}}; source="$FAKE_RELEASES/${{rest%%/*}}/${{url##*/}}" ;;
+  *) exit 22 ;;
+esac
+[ -f "$source" ] || exit 22
+cp "$source" "$output"
+""".replace("{prefix}", RELEASES_PREFIX).replace("{{", "{").replace("}}", "}")
+
+FAKE_UNAME = """#!/bin/sh
+case "$1" in
+  -s) echo Darwin ;;
+  -m) echo sparc64 ;;
+esac
+"""
+
+
+def write_executable(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    path.chmod(0o755)
+
+
+def host_arch():
+    machine = subprocess.run(["uname", "-m"], stdout=subprocess.PIPE, check=True).stdout.decode().strip()
+    return {"arm64": "arm64", "x86_64": "amd64"}[machine]
+
+
+def make_release(directory, binary, corrupt=False):
+    """在本地目录生成与 CI 同结构的发布资产；corrupt 时写入错误校验和。"""
+    directory.mkdir(parents=True)
+    staging = directory / "staging"
+    staging.mkdir()
+    (staging / "jumpdb").write_bytes(Path(binary).read_bytes())
+    (staging / "jumpdb").chmod(0o755)
+    (staging / "README.md").write_text("fixture\n")
+    asset = f"jumpdb-darwin-{host_arch()}.tar.gz"
+    subprocess.run(["tar", "-czf", str(directory / asset), "-C", str(staging), "jumpdb", "README.md"],
+                   check=True, env={**os.environ, "COPYFILE_DISABLE": "1"})
+    digest = hashlib.sha256((directory / asset).read_bytes()).hexdigest()
+    if corrupt:
+        digest = "0" * 64
+    (directory / "SHA256SUMS").write_text(f"{digest}  {asset}\n")
+
+
+def run_install(home, fake_bin, path_entries, extra_env=None):
+    env = {
+        "HOME": str(home), "PATH": ":".join([str(fake_bin), *map(str, path_entries), "/usr/bin", "/bin", "/usr/sbin"]),
+        "FAKE_RELEASES": str(home / "releases"), "FAKE_CURL_LOG": str(home / "curl.log"),
+        **(extra_env or {}),
+    }
+    return subprocess.run(["/bin/sh", str(INSTALL_SCRIPT)], env=env, stdin=subprocess.DEVNULL,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+
+
+def check_install(binary):
+    syntax = subprocess.run(["/bin/sh", "-n", str(INSTALL_SCRIPT)], stderr=subprocess.PIPE)
+    require(syntax.returncode == 0, "install.sh 语法检查失败")
+    binary_bytes = Path(binary).read_bytes()
+    expected_version = subprocess.run([binary, "version"], stdout=subprocess.PIPE, check=True).stdout.decode().split()[1]
+    with tempfile.TemporaryDirectory(prefix="jumpdb-install-smoke-") as directory:
+        home = Path(directory)
+        fake_bin = home / "fakebin"
+        write_executable(fake_bin / "curl", FAKE_CURL)
+        make_release(home / "releases" / "latest", binary)
+        make_release(home / "releases" / "v0.0.0-smoke", binary)
+        make_release(home / "releases" / "v0.0.0-corrupt", binary, corrupt=True)
+        default_dir = home / ".local" / "bin"
+        target = default_dir / "jumpdb"
+
+        # 首次安装到默认目录；目录不在 PATH 时只提示，不改 shell 配置。
+        result = run_install(home, fake_bin, [])
+        output = (result.stdout + result.stderr).decode()
+        require(result.returncode == 0, "首次安装失败：" + output)
+        require(target.read_bytes() == binary_bytes and target.stat().st_mode & 0o777 == 0o755, "安装的二进制或权限不正确")
+        require(f"已安装 {target}：{expected_version}" in output, "首次安装未报告版本")
+        require("不在 PATH 中" in output and f'export PATH="{default_dir}:$PATH"' in output, "缺少 PATH 提示")
+        require(not (home / ".zshrc").exists() and not (home / ".config").exists(), "安装脚本改动了 shell 或 jumpdb 配置")
+        require((home / "curl.log").read_text().splitlines()[0].startswith(RELEASES_PREFIX + "latest/download/"), "默认未从最新稳定版下载")
+
+        # 覆盖不支持 version 命令的旧二进制，并指定版本下载。
+        write_executable(target, "#!/bin/sh\nexit 2\n")
+        (home / "curl.log").unlink()
+        result = run_install(home, fake_bin, [default_dir], {"JUMPDB_VERSION": "v0.0.0-smoke"})
+        output = (result.stdout + result.stderr).decode()
+        require(result.returncode == 0, "升级安装失败：" + output)
+        require(target.read_bytes() == binary_bytes, "升级未替换二进制")
+        require(f"旧版本（不支持 version 命令） → {expected_version}" in output, "升级未报告新旧版本")
+        require("不在 PATH 中" not in output and "警告" not in output, "目录已在 PATH 时不应提示")
+        require(all(line.startswith(RELEASES_PREFIX + "download/v0.0.0-smoke/")
+                    for line in (home / "curl.log").read_text().splitlines()), "未使用指定版本下载")
+
+        # PATH 中更靠前的同名二进制需要警告。
+        shadow = home / "shadow"
+        write_executable(shadow / "jumpdb", "#!/bin/sh\nexit 0\n")
+        result = run_install(home, fake_bin, [shadow, default_dir])
+        require(result.returncode == 0 and f"优先生效的 jumpdb 是 {shadow / 'jumpdb'}" in result.stdout.decode(), "缺少 PATH 冲突警告")
+
+        # 校验和不一致时拒绝安装，保留原二进制且不留临时文件；自定义目录同样适用。
+        custom = home / "custom"
+        result = run_install(home, fake_bin, [], {"JUMPDB_VERSION": "v0.0.0-corrupt", "JUMPDB_INSTALL_DIR": str(custom) + "/"})
+        require(result.returncode == 1 and "SHA-256 校验不一致" in result.stderr.decode(), "校验和不一致未被拒绝")
+        require(not (custom / "jumpdb").exists(), "校验失败仍安装了二进制")
+        result = run_install(home, fake_bin, [], {"JUMPDB_VERSION": "v0.0.0-corrupt"})
+        require(result.returncode == 1 and target.read_bytes() == binary_bytes, "校验失败改变了已安装的二进制")
+        require(sorted(path.name for path in default_dir.iterdir()) == ["jumpdb"], "安装目录残留临时文件")
+
+        result = run_install(home, fake_bin, [], {"JUMPDB_VERSION": "v0.0.0-smoke", "JUMPDB_INSTALL_DIR": str(custom) + "/"})
+        require(result.returncode == 0 and (custom / "jumpdb").read_bytes() == binary_bytes, "自定义安装目录失败")
+
+        # 参数校验与不支持的架构在下载前即停止。
+        for extra, message in [
+            ({"JUMPDB_VERSION": "0.1.0"}, "v 开头"),
+            ({"JUMPDB_VERSION": "v0.1.0/../x"}, "不允许的字符"),
+            ({"JUMPDB_VERSION": "v9.9.9"}, "下载 jumpdb-darwin-"),
+            ({"JUMPDB_INSTALL_DIR": "relative/bin"}, "绝对路径"),
+        ]:
+            result = run_install(home, fake_bin, [], extra)
+            require(result.returncode == 1 and message in result.stderr.decode(), f"未拒绝 {extra}")
+        uname_bin = home / "unamebin"
+        write_executable(uname_bin / "uname", FAKE_UNAME)
+        result = run_install(home, fake_bin, [], {"PATH": f"{uname_bin}:{fake_bin}:/usr/bin:/bin:/usr/sbin"})
+        require(result.returncode == 1 and "不支持的架构：sparc64" in result.stderr.decode(), "未拒绝不支持的架构")
+
+
 def main():
     require(len(sys.argv) == 2, "用法：python3 scripts/smoke_cli.py /path/to/jumpdb")
     binary = str(Path(sys.argv[1]).resolve())
@@ -243,7 +385,8 @@ def main():
         check_network_exit(binary, home, cancel=False)
         check_network_exit(binary, home, cancel=True)
         check_ui(binary, home)
-    print("CLI 实机合成 smoke 通过：隐藏录入/更新/取消恢复、参数与端口错误、门户探测失败、SIGINT、端口重绑及控制页令牌/Host 校验与退出。")
+    check_install(binary)
+    print("CLI 实机合成 smoke 通过：隐藏录入/更新/取消恢复、参数与端口错误、门户探测失败、SIGINT、端口重绑、控制页令牌/Host 校验与退出，以及 install.sh 安装/升级/校验失败/PATH 提示。")
 
 
 if __name__ == "__main__":

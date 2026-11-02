@@ -28,6 +28,13 @@ jobs:
     permissions:
       contents: write
     steps:
+      # install.sh 取自与本次验证相同的提交，已由 CI smoke 用假 curl 验证。
+      - name: 检出安装脚本
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/install.sh
+          sparse-checkout-cone-mode: false
       - name: 下载 arm64 产物
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -50,8 +57,14 @@ jobs:
           cat > "$RUNNER_TEMP/release-notes.md" <<EOF
           macOS 独立 CLI，运行时不依赖 Python。源码提交：$GITHUB_SHA。
 
+          安装本版本（自动识别架构、校验 SHA256SUMS，装到 ~/.local/bin）：
+
+              curl -fsSL https://github.com/$GH_REPO/releases/download/$RELEASE_TAG/install.sh | JUMPDB_VERSION=$RELEASE_TAG sh
+
+          安装后运行 jumpdb --help。手动安装、升级、卸载及快速开始见 [README](https://github.com/$GH_REPO/blob/$RELEASE_TAG/README.md)。
+
           - Apple Silicon 下载 jumpdb-darwin-arm64.tar.gz，Intel 下载 jumpdb-darwin-amd64.tar.gz。
-          - SHA256SUMS 用于校验压缩包；每个包仅包含 jumpdb 和 README.md。
+          - SHA256SUMS 用于校验压缩包，只能发现下载损坏，不能证明来源；每个包仅包含 jumpdb 和 README.md。
           - 未做 Developer ID 签名和公证，可能受 Gatekeeper 或企业安全策略拦截。
           - 通过双架构原生 Go 测试、race、vet、build 和本机合成 CLI smoke。
           - 合成验证不代表真实门户会话、代理握手或数据库登录已通过。
@@ -62,5 +75,6 @@ jobs:
           fi
           gh release create "$RELEASE_TAG" --repo "$GH_REPO" --verify-tag --draft \
             --title "jumpdb $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" \
-            "${flags[@]}" dist/jumpdb-darwin-arm64.tar.gz dist/jumpdb-darwin-amd64.tar.gz dist/SHA256SUMS
+            "${flags[@]}" dist/jumpdb-darwin-arm64.tar.gz dist/jumpdb-darwin-amd64.tar.gz dist/SHA256SUMS \
+            scripts/install.sh
           gh release edit "$RELEASE_TAG" --repo "$GH_REPO" --draft=false
