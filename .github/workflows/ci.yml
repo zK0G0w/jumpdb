@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    name: macOS / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: amd64
+    env:
+      EXPECTED_ARCH: ${{ matrix.arch }}
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: 安装 Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: 确认原生运行架构
+        run: |
+          go version
+          test "$(go env GOOS)/$(go env GOARCH)" = "darwin/$EXPECTED_ARCH"
+          python3 --version
+      - name: 全量测试
+        run: go test ./... -count=1
+      - name: Race 检查
+        run: go test -race ./... -count=1
+      - name: 静态检查
+        run: go vet ./...
+      - name: 构建
+        run: |
+          go build ./...
+          mkdir -p "$RUNNER_TEMP/package"
+          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/package/jumpdb" ./cmd/jumpdb
+      - name: CLI 本机合成验证
+        run: python3 -I -B scripts/smoke_cli.py "$RUNNER_TEMP/package/jumpdb"
+      - name: 打包已验证的二进制
+        run: |
+          mkdir -p dist
+          cp README.md "$RUNNER_TEMP/package/README.md"
+          COPYFILE_DISABLE=1 tar -czf "dist/jumpdb-darwin-$EXPECTED_ARCH.tar.gz" \
+            -C "$RUNNER_TEMP/package" jumpdb README.md
+      - name: 保存构建产物
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: jumpdb-darwin-${{ matrix.arch }}
+          path: dist/jumpdb-darwin-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7

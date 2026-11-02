@@ -105,6 +105,37 @@ python3 -I -B scripts/smoke_cli.py /tmp/jumpdb-darwin-arm64
 - `scripts/smoke_cli.py` 使用构建后的真实命令、临时 HOME 和伪终端，验证隐藏录入／更新／重录、取消时不保存及终端恢复、参数错误、非终端输入拒绝、端口占用、门户探测失败、`SIGINT` 和端口重绑。该脚本的合成门户只触发 TLS 建立失败或等待，不证明完整 HTTPS 会话成功；完整申请与代理转发由 Go 集成测试覆盖。
 - 没有读取用户凭据配置、连接真实门户或代理。DBX、Navicat、DBeaver、DataGrip、`mysql` 的真实登录、空闲超过 10 秒及长查询均尚未验证，真实联调需另行授权。
 
+## GitHub Actions 与分发
+
+- `.github/workflows/ci.yml` 在 PR、推送 `main` 或手动运行时检查；Release 也复用该工作流。分别在 `macos-15`（arm64）和 `macos-15-intel`（amd64）上原生执行全量测试、`race`、`vet`、`build` 及 `scripts/smoke_cli.py`，确认运行架构后才打包。临时构建产物保留 7 天。
+- 推送 `v*` 标签触发 `.github/workflows/release.yml`，例如 `v0.1.0`。两个架构检查全部通过后，直接使用本次检查的压缩包，不重新构建。先创建草稿并上传全部资产，成功后公开 Release；标签含 `-`（例如 `v0.1.0-rc.1`）时标为预发布。
+- Release 提供 `jumpdb-darwin-arm64.tar.gz`、`jumpdb-darwin-amd64.tar.gz` 和 `SHA256SUMS`。压缩包仅含可执行文件 `jumpdb` 与 `README.md`，不包含配置、测试样本或凭据。产物未做 Developer ID 签名和公证。
+- 普通检查仅有 `contents: read`，只有发布 job 有 `contents: write`，使用内置 `GITHUB_TOKEN`；无需配置个人 PAT、门户、密钥或 Token。官方 Actions 固定完整提交 SHA，升级时需核对对应版本。CI 只运行合成门户和本机回环服务。
+- 首次使用前，在仓库设置中启用 GitHub Actions，并确保仓库／组织策略允许所用官方 Actions 及发布 job 的写权限。配置落地不代表远端工作流已执行成功；请以对应 run 的结果为准。若上传或公开失败，可能留下草稿；先人工检查 Release 和资产，再决定清理并重跑。流程不会覆盖已有同标签 Release，也不使用 `--clobber`。
+
+本次配置已通过 `actionlint v1.7.12` 和 YAML 解析；本机执行工作流中的构建、smoke、打包及校验命令，确认包内文件、可执行权限和解压运行，并用假 `gh` 验证稳定版／预发布及创建失败不继续公开。实际运行仍仅为 macOS arm64，amd64 仅交叉构建；尚未推送、运行 GitHub 双架构 job 或上传 Release。
+
+维护者确认待发布提交后，可以显式执行以下命令；创建／推送标签会触发远端发布，不属于本地构建步骤：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+使用者从对应版本的 GitHub Release 下载**两个压缩包及 `SHA256SUMS`**到同一空目录，然后在该目录验证并解压适合本机的包：
+
+```bash
+shasum -a 256 -c SHA256SUMS
+
+# Apple Silicon；Intel 改为 jumpdb-darwin-amd64.tar.gz
+tar -xzf jumpdb-darwin-arm64.tar.gz
+./jumpdb --help
+```
+
+校验和用于发现下载损坏，不等于代码签名或独立的来源认证。无需 Python 即可运行解压后的 CLI；Python 仅用于开发和 CI smoke。Gatekeeper 或企业策略拦截时应按组织许可流程处理，本项目不提供自动绕过操作。
+
+Runner 架构与标签依据 [GitHub 官方 runner 镜像清单](https://github.com/actions/runner-images#available-images)，发布参数依据 [GitHub CLI 的 Release 文档](https://cli.github.com/manual/gh_release_create)。
+
 ## 已知限制
 
 - 真实门户、真实代理以及各数据库客户端的登录都还没有经过验证。

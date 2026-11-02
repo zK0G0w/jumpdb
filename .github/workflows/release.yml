@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    name: 发布前验证
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: 发布 macOS 产物
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: 下载 arm64 产物
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: jumpdb-darwin-arm64
+          path: dist
+      - name: 下载 amd64 产物
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: jumpdb-darwin-amd64
+          path: dist
+      - name: 生成 SHA-256 校验文件
+        working-directory: dist
+        run: sha256sum jumpdb-darwin-arm64.tar.gz jumpdb-darwin-amd64.tar.gz > SHA256SUMS
+      - name: 创建并发布 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cat > "$RUNNER_TEMP/release-notes.md" <<EOF
+          macOS 独立 CLI，运行时不依赖 Python。源码提交：$GITHUB_SHA。
+
+          - Apple Silicon 下载 jumpdb-darwin-arm64.tar.gz，Intel 下载 jumpdb-darwin-amd64.tar.gz。
+          - SHA256SUMS 用于校验压缩包；每个包仅包含 jumpdb 和 README.md。
+          - 未做 Developer ID 签名和公证，可能受 Gatekeeper 或企业安全策略拦截。
+          - 通过双架构原生 Go 测试、race、vet、build 和本机合成 CLI smoke。
+          - 合成验证不代表真实门户会话、代理握手或数据库登录已通过。
+          EOF
+          flags=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$RELEASE_TAG" --repo "$GH_REPO" --verify-tag --draft \
+            --title "jumpdb $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" \
+            "${flags[@]}" dist/jumpdb-darwin-arm64.tar.gz dist/jumpdb-darwin-amd64.tar.gz dist/SHA256SUMS
+          gh release edit "$RELEASE_TAG" --repo "$GH_REPO" --draft=false
