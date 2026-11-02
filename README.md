@@ -49,10 +49,11 @@ jumpdb connect --id 856 --show-password
 
 - 门户必须是 HTTPS 根地址，不包含账号、查询参数或业务路径。两把密钥按原始字符串录入，分别恰好 16 字节，不是十六进制或 Base64 编码。HTTP 主流程只使用数据库密钥；传输密钥保留在本地配置中，不用于当前 `connect`。
 - `token set` 只接受交互终端，全部字段隐藏输入；不接受凭据参数、管道或文件作为输入。按提示逐项录入，Token 只填写值，不含 Cookie 名称。
-- 配置使用 `os.UserConfigDir()/jumpdb/config.json`；macOS 上为 `~/Library/Application Support/jumpdb/config.json`。目录权限 `0700`，文件创建和更新后均为 `0600`，先写同目录临时文件再原子替换。
+- 配置默认位于 `~/.config/jumpdb/config.json`；若 `$XDG_CONFIG_HOME` 为绝对路径，则优先使用 `$XDG_CONFIG_HOME/jumpdb/config.json`，未设置、为空或为相对路径时回退默认位置。路径与二进制所在目录及工作目录无关。目录权限 `0700`，文件创建和更新后均为 `0600`，先写同目录临时文件再原子替换。
 - 配置是**权限受限的明文文件，不是加密保险库**，请按凭据管理要求保护本机及备份。文件缺失时首次配置；格式损坏、权限不为 `0600` 或文件为符号链接时拒绝读取。先人工检查、修复或备份移走损坏文件，再录入；不会静默重置。
 - `Ctrl+C` 或输入结束可取消尚未完成的录入，不保存部分输入。保存只验证本地格式，不验证 Token 有效性。
 - 不查找、不读取、不迁移或覆盖 `~/.ssotool_mac_conf.json`。
+- 不再读取 macOS 原路径 `~/Library/Application Support/jumpdb/config.json`，也不会自动迁移或删除它。如需沿用，请先确认新位置没有配置，再手动将原文件移动到上述新路径，并保证目录 `0700`、文件 `0600`；也可执行 `jumpdb token set` 在新位置重新录入。旧文件中的凭据需自行妥善处理。
 
 ### 资源 ID 与密码
 

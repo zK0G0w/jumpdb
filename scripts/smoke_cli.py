@@ -21,15 +21,13 @@ def require(condition, message):
 
 
 def config_path(home):
-    if sys.platform == "darwin":
-        return home / "Library" / "Application Support" / "jumpdb" / "config.json"
     return home / ".config" / "jumpdb" / "config.json"
 
 
 def environment(home):
     result = os.environ.copy()
     result["HOME"] = str(home)
-    result["XDG_CONFIG_HOME"] = str(home / ".config")
+    result.pop("XDG_CONFIG_HOME", None)
     return result
 
 

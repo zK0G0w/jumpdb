@@ -15,6 +15,34 @@ func fixture() config.Data {
 	return config.Data{Portal: "https://portal.invalid", TransKey: "0123456789abcdef", DBKey: "fedcba9876543210", Token: "fixture-token"}
 }
 
+func TestDefaultPath(t *testing.T) {
+	home := t.TempDir()
+	xdg := filepath.Join(t.TempDir(), "custom config")
+	for _, test := range []struct {
+		name    string
+		home    string
+		xdg     string
+		want    string
+		wantErr bool
+	}{
+		{name: "默认目录", home: home, want: filepath.Join(home, ".config", "jumpdb", "config.json")},
+		{name: "绝对路径优先", home: home, xdg: xdg, want: filepath.Join(xdg, "jumpdb", "config.json")},
+		{name: "相对路径回退", home: home, xdg: "relative/config", want: filepath.Join(home, ".config", "jumpdb", "config.json")},
+		{name: "仅有绝对路径", xdg: xdg, want: filepath.Join(xdg, "jumpdb", "config.json")},
+		{name: "缺少用户目录", wantErr: true},
+		{name: "相对路径且缺少用户目录", xdg: "relative/config", wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("HOME", test.home)
+			t.Setenv("XDG_CONFIG_HOME", test.xdg)
+			path, err := config.DefaultPath()
+			if (err != nil) != test.wantErr || path != test.want {
+				t.Fatalf("DefaultPath() = (%q, %v)，期望路径 %q，错误 %t", path, err, test.want, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestSaveLoadAndPermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "jumpdb", "config.json")
 	if _, err := config.Load(path); !errors.Is(err, os.ErrNotExist) {

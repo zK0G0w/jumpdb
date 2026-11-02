@@ -55,11 +55,16 @@ func (data Data) Validate() error {
 	return nil
 }
 
-// DefaultPath 使用系统的用户配置目录，不查找旧版配置。
+// DefaultPath 优先使用绝对路径的 XDG_CONFIG_HOME，否则回退到 ~/.config；不查找旧配置。
 func DefaultPath() (string, error) {
-	directory, err := os.UserConfigDir()
-	if err != nil {
-		return "", errors.New("无法确定用户配置目录")
+	directory := os.Getenv("XDG_CONFIG_HOME")
+	// 相对路径会随工作目录变化，不能用来定位用户凭据。
+	if !filepath.IsAbs(directory) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", errors.New("无法确定用户配置目录")
+		}
+		directory = filepath.Join(home, ".config")
 	}
 	return filepath.Join(directory, "jumpdb", "config.json"), nil
 }

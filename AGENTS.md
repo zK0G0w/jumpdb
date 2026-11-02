@@ -43,7 +43,7 @@ jumpdb connect --id RESOURCE_ID --port 9012
 ```
 
 - 默认只监听 `127.0.0.1`，不开放到局域网。
-- 配置在 `os.UserConfigDir()/jumpdb/config.json`，目录 `0700`、文件 `0600`，同目录临时文件原子替换；录入仅接受终端，`token set --configure` 显式重录全部配置。配置损坏或权限异常时报错，不静默重置；不读取旧版配置。
+- 配置默认在 `~/.config/jumpdb/config.json`；绝对路径的 `$XDG_CONFIG_HOME` 优先，未设置、为空或相对路径时回退默认位置。目录 `0700`、文件 `0600`，同目录临时文件原子替换；录入仅接受终端，`token set --configure` 显式重录全部配置。配置损坏或权限异常时报错，不静默重置；不读取、自动迁移或删除原 macOS `~/Library/Application Support/jumpdb/config.json`，手动迁移说明见 README。
 - 生产配置要求 HTTPS 根地址，两把密钥按原始 16 字节字符串录入；HTTP 会话主路径只用 DB 密钥，传输密钥仅保存。合成 HTTP 服务通过测试代码注入，不添加跳过证书校验或 HTTP 生产开关。
 - CLI 默认将无前导零的十进制非负整数 ID 转成数字，其他非空值保留字符串；数字溢出报错。`--id-type string|number` 可强制类型，核心 `session.StringID` 仍不做转换。
 - 显示客户端应使用的本地主机、端口、数据库类型和账号；只有显式 `--show-password` 且标准输出为终端时显示初始会话密码，不实现剪贴板复制。输出类型、账号、密码时转义控制字符，日志不包含凭据。
