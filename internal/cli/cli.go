@@ -96,7 +96,7 @@ func (app *application) run(ctx context.Context, args []string) int {
 		if parseErr := flags.Parse(args[1:]); parseErr != nil {
 			return app.flagError(parseErr)
 		}
-		resource, parseErr := parseID(*id, *idType)
+		resource, parseErr := config.ParseResourceID(*id, *idType)
 		if flags.NArg() != 0 || parseErr != nil || *port < 1 || *port > 65535 {
 			return app.argumentError()
 		}
@@ -134,27 +134,6 @@ func (app *application) argumentError() int {
 	return 2
 }
 
-func parseID(value, kind string) (session.ResourceID, error) {
-	if value == "" || (kind != "auto" && kind != "string" && kind != "number") {
-		return session.ResourceID{}, errors.New("资源 ID 或类型无效")
-	}
-	digits := true
-	for _, character := range value {
-		if character < '0' || character > '9' {
-			digits = false
-			break
-		}
-	}
-	if kind == "number" || kind == "auto" && digits && (len(value) == 1 || value[0] != '0') {
-		number, err := strconv.ParseInt(value, 10, 64)
-		if !digits || err != nil {
-			return session.ResourceID{}, errors.New("数字资源 ID 必须是 int64 范围内的非负整数")
-		}
-		return session.NumberID(number), nil
-	}
-	return session.StringID(value), nil
-}
-
 func (app *application) setToken(ctx context.Context, configure bool) error {
 	if !app.inputTerminal {
 		return errors.New("token set 需要交互终端，拒绝从管道或文件读取凭据")
@@ -163,12 +142,13 @@ func (app *application) setToken(ctx context.Context, configure bool) error {
 	if err != nil {
 		return err
 	}
-	data, err := config.Load(path)
+	_, err = config.Load(path)
 	if errors.Is(err, os.ErrNotExist) {
 		configure = true
 	} else if err != nil {
 		return err
 	}
+	var entered config.Data
 	type promptField struct {
 		label string
 		value *string
@@ -176,12 +156,12 @@ func (app *application) setToken(ctx context.Context, configure bool) error {
 	var fields []promptField
 	if configure {
 		fields = append(fields,
-			promptField{"门户 HTTPS 地址（隐藏输入）：", &data.Portal},
-			promptField{"传输密钥（原始 16 字节，隐藏输入）：", &data.TransKey},
-			promptField{"数据库密钥（原始 16 字节，隐藏输入）：", &data.DBKey},
+			promptField{"门户 HTTPS 地址（隐藏输入）：", &entered.Portal},
+			promptField{"传输密钥（原始 16 字节，隐藏输入）：", &entered.TransKey},
+			promptField{"数据库密钥（原始 16 字节，隐藏输入）：", &entered.DBKey},
 		)
 	}
-	fields = append(fields, promptField{"Token（仅值，隐藏输入）：", &data.Token})
+	fields = append(fields, promptField{"Token（仅值，隐藏输入）：", &entered.Token})
 	for _, field := range fields {
 		value, err := app.prompt(ctx, field.label)
 		if err != nil {
@@ -192,7 +172,14 @@ func (app *application) setToken(ctx context.Context, configure bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := config.Save(path, data); err != nil {
+	// 录入可能持续较久，保存前重新读取磁盘，只改录入的字段，避免覆盖 Web 控制页写入的资源列表。
+	if _, err := config.Update(path, func(data *config.Data) error {
+		if configure {
+			data.Portal, data.TransKey, data.DBKey = entered.Portal, entered.TransKey, entered.DBKey
+		}
+		data.Token = entered.Token
+		return nil
+	}); err != nil {
 		return err
 	}
 	fmt.Fprintln(app.out, "本地配置已保存（0600）；未验证 Token 有效性。")

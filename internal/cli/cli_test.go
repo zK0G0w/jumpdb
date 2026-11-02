@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -115,7 +116,7 @@ func TestTokenFirstSetupUpdateAndReconfigure(t *testing.T) {
 			t.Fatal("录入失败或字段数量不正确")
 		}
 		loaded, err := config.Load(path)
-		if err != nil || loaded != data {
+		if err != nil || !reflect.DeepEqual(loaded, data) {
 			t.Fatal("持久化数据不正确")
 		}
 		data.Token = "fixture-replacement"
@@ -125,6 +126,30 @@ func TestTokenFirstSetupUpdateAndReconfigure(t *testing.T) {
 		if strings.Contains(output.String(), secret) {
 			t.Fatal("录入输出泄露配置")
 		}
+	}
+}
+
+func TestTokenSetPreservesResourcesWrittenDuringPrompt(t *testing.T) {
+	app, _, path := testApp(t)
+	if err := config.Save(path, fixtureConfig()); err != nil {
+		t.Fatal(err)
+	}
+	resources := []config.Resource{{ID: "856", IDType: "auto", Port: 9011, Name: "fixture"}}
+	app.prompt = func(context.Context, string) (string, error) {
+		// 模拟 Web 控制页在终端录入期间保存了资源列表。
+		data := fixtureConfig()
+		data.Resources = resources
+		if err := config.Save(path, data); err != nil {
+			t.Fatal(err)
+		}
+		return "fixture-replacement", nil
+	}
+	if app.run(context.Background(), []string{"token", "set"}) != 0 {
+		t.Fatal("更新 Token 失败")
+	}
+	loaded, err := config.Load(path)
+	if err != nil || loaded.Token != "fixture-replacement" || !reflect.DeepEqual(loaded.Resources, resources) {
+		t.Fatal("更新 Token 覆盖了录入期间写入的资源列表")
 	}
 }
 

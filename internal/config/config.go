@@ -11,8 +11,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/zK0G0w/jumpdb/internal/secdb"
+	"github.com/zK0G0w/jumpdb/internal/session"
 )
 
 // Data 只用于本地持久化，不包含任何默认门户或协议密钥。
@@ -21,6 +24,57 @@ type Data struct {
 	TransKey string `json:"trans_key"`
 	DBKey    string `json:"db_key"`
 	Token    string `json:"token"`
+	// Resources 是 Web 控制页保存的常用资源，不含凭据；旧配置缺少该字段时为空。
+	Resources []Resource `json:"resources,omitempty"`
+}
+
+// Resource 是一个可在 Web 控制页一键启动的资源条目，不会自动启动。
+type Resource struct {
+	// ID 是门户资源 ID 原文，按 IDType 解释，不允许为空。
+	ID string `json:"id"`
+	// IDType 取值 auto、string 或 number，语义与 connect --id-type 一致。
+	IDType string `json:"id_type"`
+	// Port 是本地监听端口，范围 1..65535。
+	Port int `json:"port"`
+	// Name 是可选别名，最多 64 个字符，不允许控制字符。
+	Name string `json:"name,omitempty"`
+}
+
+// Validate 检查资源条目；错误不包含用户输入。
+func (resource Resource) Validate() error {
+	if _, err := ParseResourceID(resource.ID, resource.IDType); err != nil {
+		return err
+	}
+	if resource.Port < 1 || resource.Port > 65535 {
+		return errors.New("资源端口必须在 1..65535 范围内")
+	}
+	if utf8.RuneCountInString(resource.Name) > 64 || strings.IndexFunc(resource.Name, unicode.IsControl) >= 0 || !utf8.ValidString(resource.Name) {
+		return errors.New("资源别名最多 64 个字符且不能含控制字符")
+	}
+	return nil
+}
+
+// ParseResourceID 按类型解释资源 ID：auto 将无前导零的十进制非负整数作为数字，
+// 其余作为字符串；string 保留原文；number 强制 int64 范围内的非负整数。
+func ParseResourceID(value, kind string) (session.ResourceID, error) {
+	if value == "" || (kind != "auto" && kind != "string" && kind != "number") {
+		return session.ResourceID{}, errors.New("资源 ID 或类型无效")
+	}
+	digits := true
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			digits = false
+			break
+		}
+	}
+	if kind == "number" || kind == "auto" && digits && (len(value) == 1 || value[0] != '0') {
+		number, err := strconv.ParseInt(value, 10, 64)
+		if !digits || err != nil {
+			return session.ResourceID{}, errors.New("数字资源 ID 必须是 int64 范围内的非负整数")
+		}
+		return session.NumberID(number), nil
+	}
+	return session.StringID(value), nil
 }
 
 func (Data) String() string   { return "config.Data([REDACTED])" }
@@ -50,6 +104,11 @@ func (data Data) Validate() error {
 	for _, character := range data.Token {
 		if character <= 0x20 || character >= 0x7f || strings.ContainsRune(";\"\\", character) {
 			return errors.New("Token 含有不允许的 Cookie 字符，请仅录入 Token 值")
+		}
+	}
+	for _, resource := range data.Resources {
+		if err := resource.Validate(); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -97,6 +156,23 @@ func Load(path string) (Data, error) {
 		return Data{}, errors.New("本地配置格式无效，未修改原文件")
 	}
 	if err := data.Validate(); err != nil {
+		return Data{}, err
+	}
+	return data, nil
+}
+
+// Update 重新读取磁盘上的当前配置（不存在时从空配置开始），应用 change 后原子保存。
+// 只改动 change 涉及的字段，保留其他进程在此期间写入的内容（如 Web 控制页的资源列表）；
+// 两个进程同一瞬间保存时后写入者生效，原子替换保证文件不损坏。
+func Update(path string, change func(*Data) error) (Data, error) {
+	data, err := Load(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return Data{}, err
+	}
+	if err := change(&data); err != nil {
+		return Data{}, err
+	}
+	if err := Save(path, data); err != nil {
 		return Data{}, err
 	}
 	return data, nil

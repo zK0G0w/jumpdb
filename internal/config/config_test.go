@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -60,7 +61,7 @@ func TestSaveLoadAndPermissions(t *testing.T) {
 			}
 		}
 		loaded, err := config.Load(path)
-		if err != nil || loaded != data {
+		if err != nil || !reflect.DeepEqual(loaded, data) {
 			t.Fatal("保存后读取不一致")
 		}
 		if err := os.Chmod(path, 0644); err != nil {
