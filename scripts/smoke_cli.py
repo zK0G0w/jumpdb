@@ -13,6 +13,9 @@ import tempfile
 import termios
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 
 def require(condition, message):
@@ -151,6 +154,56 @@ def check_network_exit(binary, home, cancel):
             worker.join(timeout=10)
 
 
+def http_status(url, headers=None, host=None):
+    """返回状态码与响应体；host 用于模拟 DNS 重绑定后的外部域名。"""
+    request = urllib.request.Request(url, headers=headers or {})
+    if host:
+        request.add_header("Host", host)
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as error:
+        return error.code, error.read()
+
+
+def check_ui(binary, home):
+    process = subprocess.Popen(
+        [binary, "ui", "--no-open"], env=environment(home), stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    try:
+        address = None
+        deadline = time.monotonic() + 10
+        while address is None:
+            require(time.monotonic() < deadline, "等待控制页地址超时")
+            require(process.poll() is None, "控制页提前退出")
+            if select.select([process.stdout], [], [], 0.1)[0]:
+                line = process.stdout.readline().decode()
+                if line.startswith("控制页："):
+                    address = line.removeprefix("控制页：").strip()
+        parsed = urllib.parse.urlsplit(address)
+        token = urllib.parse.parse_qs(parsed.query)["token"][0]
+        base = f"http://{parsed.netloc}"
+        require(parsed.hostname == "127.0.0.1", "控制页未限定 127.0.0.1")
+        require(http_status(address)[0] == 200, "带令牌的控制页不可访问")
+        require(http_status(base + "/")[0] == 403, "缺少令牌未被拒绝")
+        status, body = http_status(base + "/api/state", {"X-Jumpdb-Token": token})
+        require(status == 200 and json.loads(body)["config"]["configured"], "状态接口不可用")
+        require(b"fixture-token" not in body and b"tttt" not in body, "状态接口泄露凭据")
+        require(http_status(base + "/api/state", {"X-Jumpdb-Token": token}, host=f"rebind.invalid:{parsed.port}")[0] == 403, "未拒绝外部 Host")
+        process.send_signal(signal.SIGINT)
+        output, error_output = process.communicate(timeout=10)
+        require(process.returncode == 0, "控制页 SIGINT 退出码不正确")
+        require(b"fixture-token" not in output + error_output, "控制页输出泄露凭据")
+        # 服务端主动关闭过 HTTP 连接，端口会处于 TIME_WAIT，不能用 bind 判断；改为确认已无监听。
+        with socket.socket() as probe:
+            require(probe.connect_ex(("127.0.0.1", parsed.port)) != 0, "控制页退出后仍在监听")
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+
+
 def main():
     require(len(sys.argv) == 2, "用法：python3 scripts/smoke_cli.py /path/to/jumpdb")
     binary = str(Path(sys.argv[1]).resolve())
@@ -162,6 +215,7 @@ def main():
         run(binary, home, ["token", "set", "--token=fixture-token"], 2)
         run(binary, home, ["token", "set"], 1)
         run(binary, home, ["connect", "--id", "856"], 1)
+        run(binary, home, ["ui", "fixture-extra"], 2)
         fields = [
             ("门户 HTTPS", "https://portal.invalid"),
             ("传输密钥", "t" * 16),
@@ -188,7 +242,8 @@ def main():
             require("端口是否已被占用".encode() in output, "端口占用提示缺失")
         check_network_exit(binary, home, cancel=False)
         check_network_exit(binary, home, cancel=True)
-    print("CLI 实机合成 smoke 通过：隐藏录入/更新/取消恢复、参数与端口错误、门户探测失败、SIGINT 和端口重绑。")
+        check_ui(binary, home)
+    print("CLI 实机合成 smoke 通过：隐藏录入/更新/取消恢复、参数与端口错误、门户探测失败、SIGINT、端口重绑及控制页令牌/Host 校验与退出。")
 
 
 if __name__ == "__main__":
