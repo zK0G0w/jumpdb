@@ -1,42 +1,62 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="system">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
 <title>jumpdb 控制页</title>
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 <header class="topbar">
-  <h1>jumpdb</h1>
-  <span id="link-status" class="badge">连接中…</span>
+  <div class="topbar-inner">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">jumpdb</span>
+      <span class="brand-sub">本地控制页</span>
+    </div>
+    <div class="topbar-actions">
+      <span id="link-status" class="pill">连接中…</span>
+      <div id="theme" class="segmented" role="radiogroup" aria-label="外观"></div>
+    </div>
+  </div>
 </header>
-<div id="notice" class="notice" hidden></div>
+<div id="notice" class="toast" role="status" hidden></div>
 <main>
-  <section class="panel">
-    <h2>配置</h2>
-    <div id="config"></div>
+  <section class="card">
+    <div class="card-head">
+      <h2>配置</h2>
+      <p>门户地址、协议密钥与 Token 只保存在本机，文件权限 0600。</p>
+    </div>
+    <div id="config" class="card-body"></div>
   </section>
-  <section class="panel">
-    <h2>资源</h2>
+  <section class="card">
+    <div class="card-head">
+      <h2>资源</h2>
+      <p>本机录入的常用资源，保存后不会自动启动。</p>
+    </div>
     <div id="resources"></div>
-    <form id="resource-form" class="row-form" autocomplete="off">
-      <input name="name" placeholder="别名（可选）" maxlength="64">
-      <input name="id" placeholder="资源 ID" required>
-      <select name="id_type" title="ID 类型">
-        <option value="auto">auto</option>
-        <option value="string">string</option>
-        <option value="number">number</option>
-      </select>
-      <input name="port" type="number" min="1" max="65535" value="9011" title="本地端口" required>
-      <button type="submit">添加</button>
+    <form id="resource-form" class="add-form" autocomplete="off">
+      <label class="field grow"><span>别名</span><input name="name" placeholder="可选" maxlength="64"></label>
+      <label class="field grow"><span>资源 ID</span><input name="id" placeholder="必填" required></label>
+      <label class="field"><span>ID 类型</span>
+        <select name="id_type">
+          <option value="auto">auto</option>
+          <option value="string">string</option>
+          <option value="number">number</option>
+        </select>
+      </label>
+      <label class="field port"><span>本地端口</span><input name="port" type="number" min="1" max="65535" value="9011" required></label>
+      <button type="submit" class="btn primary">添加资源</button>
     </form>
   </section>
-  <section class="panel">
-    <h2>隧道</h2>
-    <p class="hint">隧道只监听 127.0.0.1。“代理握手成功”不代表数据库登录成功；每个客户端连接都会重新申请会话。</p>
-    <div id="tunnels"></div>
+  <section class="card">
+    <div class="card-head">
+      <h2>隧道</h2>
+      <p>隧道只监听 127.0.0.1。“代理握手成功”不代表数据库登录成功；每个客户端连接都会重新申请会话。</p>
+    </div>
+    <div id="tunnels" class="card-body"></div>
   </section>
 </main>
 <footer class="footer">关闭此页面不会停止隧道；在终端按 Ctrl+C 停止控制页及全部隧道。</footer>

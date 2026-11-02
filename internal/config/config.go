@@ -26,6 +26,8 @@ type Data struct {
 	Token    string `json:"token"`
 	// Resources 是 Web 控制页保存的常用资源，不含凭据；旧配置缺少该字段时为空。
 	Resources []Resource `json:"resources,omitempty"`
+	// Theme 是 Web 控制页的外观偏好，取值 light 或 dark；空值表示跟随系统，不写入文件。
+	Theme string `json:"theme,omitempty"`
 }
 
 // Resource 是一个可在 Web 控制页一键启动的资源条目，不会自动启动。
@@ -110,6 +112,9 @@ func (data Data) Validate() error {
 		if err := resource.Validate(); err != nil {
 			return err
 		}
+	}
+	if data.Theme != "" && data.Theme != "light" && data.Theme != "dark" {
+		return errors.New("控制页主题无效")
 	}
 	return nil
 }

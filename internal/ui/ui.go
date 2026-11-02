@@ -2,6 +2,7 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -137,7 +138,7 @@ func (s *server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			http.Error(writer, "forbidden", http.StatusForbidden)
 			return
 		}
-		s.serveFile(writer, "index.html")
+		s.serveIndex(writer)
 	case path.Dir(request.URL.Path) == "/static":
 		// 静态资源是公开源码的一部分，不含凭据，无需令牌。
 		s.serveFile(writer, path.Base(request.URL.Path))
@@ -162,6 +163,21 @@ func (s *server) serveFile(writer http.ResponseWriter, name string) {
 	_, _ = writer.Write(raw)
 }
 
+// serveIndex 在页面中预置已保存的主题，避免脚本取回状态前先以系统配色闪烁。
+// 主题只可能是经 config 校验的固定取值，读取配置失败时保持跟随系统。
+func (s *server) serveIndex(writer http.ResponseWriter) {
+	raw, err := fs.ReadFile(s.static, "index.html")
+	if err != nil {
+		http.Error(writer, "not found", http.StatusNotFound)
+		return
+	}
+	if data, err := config.Load(s.options.ConfigPath); err == nil && data.Theme != "" {
+		raw = bytes.Replace(raw, []byte(`data-theme="system"`), []byte(`data-theme="`+data.Theme+`"`), 1)
+	}
+	writer.Header().Set("Content-Type", mime.TypeByExtension(".html"))
+	_, _ = writer.Write(raw)
+}
+
 func (s *server) serveAPI(writer http.ResponseWriter, request *http.Request) {
 	if !s.validToken(request.Header.Get("X-Jumpdb-Token")) {
 		writeJSON(writer, http.StatusForbidden, map[string]string{"error": "访问令牌无效"})
@@ -170,6 +186,7 @@ func (s *server) serveAPI(writer http.ResponseWriter, request *http.Request) {
 	routes := map[string]func(*http.Request) (any, error){
 		"/api/config":           s.saveConfig,
 		"/api/resources":        s.saveResources,
+		"/api/theme":            s.saveTheme,
 		"/api/tunnels/start":    s.startTunnel,
 		"/api/tunnels/stop":     s.stopTunnel,
 		"/api/tunnels/dismiss":  s.dismissTunnel,
@@ -231,6 +248,8 @@ type configView struct {
 	Error      string            `json:"error,omitempty"`
 	Portal     string            `json:"portal,omitempty"`
 	Resources  []config.Resource `json:"resources"`
+	// Theme 取值 system、light 或 dark；未配置或配置异常时为 system。
+	Theme string `json:"theme"`
 }
 
 type stateView struct {
@@ -240,7 +259,7 @@ type stateView struct {
 
 // state 汇总配置与隧道状态；密钥和 Token 从不返回，门户地址不属于秘密，可回填核对。
 func (s *server) state() stateView {
-	view := stateView{Config: configView{Resources: []config.Resource{}}, Tunnels: s.tunnels.views()}
+	view := stateView{Config: configView{Resources: []config.Resource{}, Theme: "system"}, Tunnels: s.tunnels.views()}
 	data, err := config.Load(s.options.ConfigPath)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -251,6 +270,9 @@ func (s *server) state() stateView {
 		view.Config.Portal = data.Portal
 		if data.Resources != nil {
 			view.Config.Resources = data.Resources
+		}
+		if data.Theme != "" {
+			view.Config.Theme = data.Theme
 		}
 	}
 	return view
@@ -315,6 +337,37 @@ func (s *server) saveResources(request *http.Request) (any, error) {
 	}
 	if _, err := config.Update(s.options.ConfigPath, func(data *config.Data) error {
 		data.Resources = input.Resources
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return map[string]bool{"ok": true}, nil
+}
+
+// saveTheme 保存控制页主题；system 以空值写入，保持未改主题的配置文件与旧版本格式一致。
+func (s *server) saveTheme(request *http.Request) (any, error) {
+	var input struct {
+		Theme string `json:"theme"`
+	}
+	if err := decode(request, &input); err != nil {
+		return nil, err
+	}
+	theme := input.Theme
+	switch theme {
+	case "system":
+		theme = ""
+	case "light", "dark":
+	default:
+		return nil, errors.New("主题只能是 system、light 或 dark")
+	}
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	// 主题与凭据同存一个文件，而保存要求配置完整，因此首次配置前只在页面内生效。
+	if _, err := config.Load(s.options.ConfigPath); errors.Is(err, os.ErrNotExist) {
+		return nil, errors.New("请先完成配置再保存主题")
+	}
+	if _, err := config.Update(s.options.ConfigPath, func(data *config.Data) error {
+		data.Theme = theme
 		return nil
 	}); err != nil {
 		return nil, err

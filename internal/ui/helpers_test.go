@@ -282,6 +282,7 @@ type stateView struct {
 		Error      string            `json:"error"`
 		Portal     string            `json:"portal"`
 		Resources  []config.Resource `json:"resources"`
+		Theme      string            `json:"theme"`
 	} `json:"config"`
 	Tunnels []tunnelView `json:"tunnels"`
 }
