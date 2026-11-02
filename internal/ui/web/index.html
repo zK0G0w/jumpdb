@@ -2,11 +2,44 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
 <title>jumpdb 控制页</title>
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<main id="app"></main>
+<header class="topbar">
+  <h1>jumpdb</h1>
+  <span id="link-status" class="badge">连接中…</span>
+</header>
+<div id="notice" class="notice" hidden></div>
+<main>
+  <section class="panel">
+    <h2>配置</h2>
+    <div id="config"></div>
+  </section>
+  <section class="panel">
+    <h2>资源</h2>
+    <div id="resources"></div>
+    <form id="resource-form" class="row-form" autocomplete="off">
+      <input name="name" placeholder="别名（可选）" maxlength="64">
+      <input name="id" placeholder="资源 ID" required>
+      <select name="id_type" title="ID 类型">
+        <option value="auto">auto</option>
+        <option value="string">string</option>
+        <option value="number">number</option>
+      </select>
+      <input name="port" type="number" min="1" max="65535" value="9011" title="本地端口" required>
+      <button type="submit">添加</button>
+    </form>
+  </section>
+  <section class="panel">
+    <h2>隧道</h2>
+    <p class="hint">隧道只监听 127.0.0.1。“代理握手成功”不代表数据库登录成功；每个客户端连接都会重新申请会话。</p>
+    <div id="tunnels"></div>
+  </section>
+</main>
+<footer class="footer">关闭此页面不会停止隧道；在终端按 Ctrl+C 停止控制页及全部隧道。</footer>
 <script src="/static/app.js"></script>
 </body>
 </html>
