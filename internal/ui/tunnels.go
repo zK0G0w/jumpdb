@@ -111,9 +111,8 @@ func running(status string) bool {
 	return status == statusStarting || status == statusListening || status == statusStopping
 }
 
-func (t *tunnels) anyRunning() bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+// anyRunningLocked 要求调用方持有 t.mu。
+func (t *tunnels) anyRunningLocked() bool {
 	for _, record := range t.list {
 		if running(record.status) {
 			return true
@@ -431,6 +430,8 @@ type provider struct {
 	token  string
 	client Session
 	hint   string
+	// issued 记录每个会话由哪个客户端申请；Token 可能在申请与激活之间切换，激活须用原客户端。
+	issued map[string]Session
 }
 
 func (p *provider) provide(ctx context.Context) (secdb.Params, error) {
@@ -438,7 +439,17 @@ func (p *provider) provide(ctx context.Context) (secdb.Params, error) {
 	if err != nil {
 		return secdb.Params{}, err
 	}
-	return client.Login(ctx, p.id)
+	params, err := client.Login(ctx, p.id)
+	if err != nil {
+		return secdb.Params{}, err
+	}
+	p.mu.Lock()
+	if p.issued == nil {
+		p.issued = make(map[string]Session)
+	}
+	p.issued[params.SessionID] = client
+	p.mu.Unlock()
+	return params, nil
 }
 
 func (p *provider) current(ctx context.Context) (Session, error) {
@@ -473,7 +484,8 @@ func (p *provider) current(ctx context.Context) (Session, error) {
 
 func (p *provider) activate(ctx context.Context, params secdb.Params) error {
 	p.mu.Lock()
-	client := p.client
+	client := p.issued[params.SessionID]
+	delete(p.issued, params.SessionID)
 	p.mu.Unlock()
 	return client.Activate(ctx, params.SessionID)
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -23,43 +24,74 @@ import (
 
 const fixturePassword = "fixture-password-marker"
 
-var fixtureParams = secdb.Params{Type: "MySQL", Username: "fixture-user", Password: fixturePassword, SessionID: "fixture-session-marker", YxzIP: "127.0.0.1"}
+// 代理地址用 localhost 而非页面本就显示的 127.0.0.1，才能检查出代理地址泄露。
+var fixtureParams = secdb.Params{Type: "MySQL", Username: "fixture-user", Password: fixturePassword, SessionID: "fixture-session-marker", YxzIP: "localhost"}
+
+// handshakeLength 是代理收到的握手长度；每次申请的会话 ID 带两位序号以互相区分。
+var handshakeLength = len("yabP") + len(fixtureParams.SessionID) + 2 + 1 + len(fixtureParams.Username)
 
 func fixtureConfig() config.Data {
 	return config.Data{Portal: "https://portal.invalid", TransKey: strings.Repeat("t", 16), DBKey: strings.Repeat("d", 16), Token: "fixture-token"}
 }
 
-// fakeSession 用函数替换门户行为，不访问网络。
+// fakeSession 模拟以某个 Token 创建的门户客户端，不访问网络。
 type fakeSession struct {
-	login func(context.Context, session.ResourceID) (secdb.Params, error)
+	portal *portal
+	token  string
 }
 
 func (fake fakeSession) Login(ctx context.Context, id session.ResourceID) (secdb.Params, error) {
-	return fake.login(ctx, id)
+	p := fake.portal
+	p.mu.Lock()
+	login, hook := p.login, p.loginHook
+	p.logins++
+	params := fixtureParams
+	params.SessionID += fmt.Sprintf("%02d", p.logins%100)
+	p.mu.Unlock()
+	if hook != nil {
+		hook(fake.token)
+	}
+	if login != nil {
+		return login(ctx, id)
+	}
+	return params, nil
 }
 
-func (fakeSession) Activate(context.Context, string) error { return nil }
+// Activate 记录发起激活的客户端所用 Token，用于检查激活与申请会话是否为同一客户端。
+func (fake fakeSession) Activate(context.Context, string) error {
+	fake.portal.mu.Lock()
+	defer fake.portal.mu.Unlock()
+	fake.portal.activations = append(fake.portal.activations, fake.token)
+	return nil
+}
 
-// portal 记录创建会话时使用的 Token，并允许测试切换登录行为。
+// portal 记录创建会话及激活时使用的 Token，并允许测试切换登录行为。
 type portal struct {
-	mu     sync.Mutex
-	tokens []string
-	login  func(context.Context, session.ResourceID) (secdb.Params, error)
+	mu          sync.Mutex
+	tokens      []string
+	activations []string
+	logins      int
+	login       func(context.Context, session.ResourceID) (secdb.Params, error)
+	loginHook   func(token string)
 }
 
 func (p *portal) newSession(_ context.Context, options session.Options) (ui.Session, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.tokens = append(p.tokens, options.Token)
-	return fakeSession{login: func(ctx context.Context, id session.ResourceID) (secdb.Params, error) {
-		p.mu.Lock()
-		login := p.login
-		p.mu.Unlock()
-		if login == nil {
-			return fixtureParams, nil
-		}
-		return login(ctx, id)
-	}}, nil
+	return fakeSession{portal: p, token: options.Token}, nil
+}
+
+func (p *portal) setLoginHook(hook func(token string)) {
+	p.mu.Lock()
+	p.loginHook = hook
+	p.mu.Unlock()
+}
+
+func (p *portal) activationTokens() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.activations...)
 }
 
 func (p *portal) setLogin(login func(context.Context, session.ResourceID) (secdb.Params, error)) {
@@ -91,8 +123,7 @@ func echoProxy(t *testing.T) int {
 			go func() {
 				defer conn.Close()
 				conn.SetDeadline(time.Now().Add(10 * time.Second))
-				expected := "yabP" + fixtureParams.SessionID + string([]byte{byte(len(fixtureParams.Username))}) + fixtureParams.Username
-				if _, err := io.ReadFull(conn, make([]byte, len(expected))); err != nil {
+				if _, err := io.ReadFull(conn, make([]byte, handshakeLength)); err != nil {
 					return
 				}
 				io.WriteString(conn, "successready")
@@ -323,7 +354,7 @@ func assertReleased(t *testing.T, port int) {
 func assertNoSecrets(t *testing.T, body string) {
 	t.Helper()
 	data := fixtureConfig()
-	for _, secret := range []string{data.TransKey, data.DBKey, data.Token, fixturePassword, fixtureParams.SessionID, "fixture-private"} {
+	for _, secret := range []string{data.TransKey, data.DBKey, data.Token, fixturePassword, fixtureParams.SessionID, fixtureParams.YxzIP, "fixture-private"} {
 		if strings.Contains(body, secret) {
 			t.Fatal("响应泄露凭据或原始错误")
 		}

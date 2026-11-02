@@ -283,7 +283,10 @@ func (s *server) saveConfig(request *http.Request) (any, error) {
 		return nil, errors.New("首次配置或重新配置需填写全部字段")
 	}
 	// 运行中的隧道已锁定门户和密钥；中途更换会让同一隧道的连接落到不同环境。
-	if configure && exists && (input.Portal != current.Portal || input.TransKey != current.TransKey || input.DBKey != current.DBKey) && s.tunnels.anyRunning() {
+	// 检查与写入期间持有隧道锁，避免其间启动新隧道。锁顺序固定为 configMu → tunnels.mu。
+	s.tunnels.mu.Lock()
+	defer s.tunnels.mu.Unlock()
+	if configure && exists && (input.Portal != current.Portal || input.TransKey != current.TransKey || input.DBKey != current.DBKey) && s.tunnels.anyRunningLocked() {
 		return nil, apiError{http.StatusConflict, "修改门户地址或密钥前请先停止所有隧道"}
 	}
 	if _, err := config.Update(s.options.ConfigPath, func(data *config.Data) error {

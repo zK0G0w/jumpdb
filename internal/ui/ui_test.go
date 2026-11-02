@@ -3,12 +3,15 @@ package ui_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/zK0G0w/jumpdb/internal/config"
 	"github.com/zK0G0w/jumpdb/internal/secdb"
@@ -168,11 +171,18 @@ func TestTunnelsRunConcurrentlyWithConnectionObservability(t *testing.T) {
 	_, raw := h.state()
 	assertNoSecrets(t, raw)
 
+	active := dialTunnel(t, firstPort)
 	if status, _ := h.post("/api/tunnels/stop", map[string]any{"id": first}); status != http.StatusOK {
 		t.Fatal("停止隧道失败")
 	}
-	h.waitTunnel(first, func(view tunnelView) bool { return view.Status == "stopped" })
+	tunnel = h.waitTunnel(first, func(view tunnelView) bool { return view.Status == "stopped" })
 	assertReleased(t, firstPort)
+	if _, err := active.Read(make([]byte, 1)); err == nil {
+		t.Fatal("停止隧道未关闭其活跃连接")
+	}
+	if last := tunnel.Connections[len(tunnel.Connections)-1]; last.Status != "closed" || last.Reason != "stopped" {
+		t.Fatal("停止时活跃连接的结束原因不正确")
+	}
 	if status, _ := h.post("/api/tunnels/password", map[string]any{"id": first}); status != http.StatusConflict {
 		t.Fatal("停止后不应再提供密码")
 	}
@@ -304,5 +314,71 @@ func TestTokenHotReloadAndExternalConfigChange(t *testing.T) {
 	tunnel := h.waitTunnel(id, func(view tunnelView) bool { return view.Status == "failed" })
 	if !strings.Contains(tunnel.Failure, "外部变更") {
 		t.Fatal("外部修改门户后未提示重启隧道")
+	}
+}
+
+func TestExternalKeyChangeRejectsNewConnections(t *testing.T) {
+	h := start(t, true)
+	port := availablePort(t)
+	id := h.startTunnel(port)
+	h.waitTunnel(id, func(view tunnelView) bool { return view.Status == "listening" })
+	if _, err := config.Update(h.path, func(data *config.Data) error {
+		data.DBKey = strings.Repeat("e", 16)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if tunnel := h.waitTunnel(id, func(view tunnelView) bool { return view.Status == "failed" }); !strings.Contains(tunnel.Failure, "外部变更") {
+		t.Fatal("外部修改密钥后未提示重启隧道")
+	}
+}
+
+// 连接 A 用旧 Token 申请会话后、激活前，连接 B 触发了 Token 切换；
+// A 的激活仍须由申请该会话的旧客户端发起。
+func TestActivationUsesTheClientThatIssuedTheSession(t *testing.T) {
+	h := start(t, true)
+	port := availablePort(t)
+	id := h.startTunnel(port)
+	h.waitTunnel(id, func(view tunnelView) bool { return view.Status == "listening" })
+	original := fixtureConfig().Token
+	held, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	h.portal.setLoginHook(func(token string) {
+		if token == original {
+			once.Do(func() {
+				close(held)
+				<-release
+			})
+		}
+	})
+	first, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	select {
+	case <-held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("第一个连接未进入会话申请")
+	}
+	if _, err := config.Update(h.path, func(data *config.Data) error {
+		data.Token = "fixture-rotated-token"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dialTunnel(t, port)
+	close(release)
+	first.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.ReadFull(first, make([]byte, 5)); err != nil {
+		t.Fatal("第一个连接未完成握手")
+	}
+	if got := h.portal.activationTokens(); len(got) != 2 || got[0] != "fixture-rotated-token" || got[1] != original {
+		t.Fatalf("激活使用的客户端不正确：%d 次", len(got))
 	}
 }

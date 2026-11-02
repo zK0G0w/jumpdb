@@ -8,7 +8,8 @@ const labels = {
   tunnel: { starting: "启动中", listening: "监听中", stopping: "停止中", stopped: "已停止", failed: "已失败" },
   tunnelClass: { starting: "warn", listening: "ok", stopping: "warn", stopped: "", failed: "bad" },
   connection: { connecting: "建立中", active: "转发中", closed: "已结束", failed: "失败" },
-  reason: { client: "客户端关闭", upstream: "上游关闭", stopped: "主动停止" },
+  // stopped 涵盖手动停止、因其他连接失败而停止隧道及控制页退出。
+  reason: { client: "客户端关闭", upstream: "上游关闭", stopped: "隧道停止" },
   failureStage: { config: "本地配置", probe: "门户探测", initial: "初始会话", listen: "本地监听", session: "会话申请", dial: "代理连接", activate: "会话激活", handshake: "代理握手" },
 };
 
@@ -101,6 +102,10 @@ function formatTime(value) {
   return new Date(value).toLocaleTimeString("zh-CN", { hour12: false });
 }
 
+function anyTunnelRunning() {
+  return (ui.state?.tunnels || []).some((tunnel) => ["starting", "listening", "stopping"].includes(tunnel.status));
+}
+
 function runningTunnelOnPort(port) {
   return (ui.state?.tunnels || []).some((tunnel) => tunnel.port === port && ["starting", "listening", "stopping"].includes(tunnel.status));
 }
@@ -127,7 +132,7 @@ function busy() {
 }
 
 function render() {
-  const signature = JSON.stringify(ui.state.config) + ui.reconfigure;
+  const signature = JSON.stringify(ui.state.config) + ui.reconfigure + anyTunnelRunning();
   // 配置表单只在配置变化时重建，避免轮询清空正在输入的内容。
   if (signature !== ui.configSignature) {
     ui.configSignature = signature;
@@ -170,7 +175,9 @@ function renderConfig() {
 function tokenForm() {
   const input = secretInput("token", "新的 Token（仅值）");
   input.id = "token-input";
-  return h("form", {
+  // 运行中的隧道已锁定门户和密钥，重新配置须先停止全部隧道；Token 可随时更新。
+  const locked = anyTunnelRunning();
+  return h("div", {}, h("form", {
     class: "row-form",
     autocomplete: "off",
     onsubmit: async (event) => {
@@ -181,7 +188,8 @@ function tokenForm() {
   },
   input,
   h("button", { type: "submit", class: "primary" }, "更新 Token"),
-  h("button", { type: "button", onclick: () => { ui.reconfigure = true; render(); } }, "重新配置"));
+  h("button", { type: "button", disabled: locked, title: locked ? "请先停止所有隧道" : undefined, onclick: () => { ui.reconfigure = true; render(); } }, "重新配置")),
+  locked && h("p", { class: "hint" }, "有隧道运行时不能修改门户地址或密钥，请先停止所有隧道；更新 Token 不受影响。"));
 }
 
 // fullConfigForm 用于首次配置或显式重新配置；密钥和 Token 从不回填，门户地址可回填核对。
