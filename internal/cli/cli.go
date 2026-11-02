@@ -10,7 +10,9 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/zK0G0w/jumpdb/internal/config"
@@ -21,26 +23,85 @@ import (
 	"golang.org/x/term"
 )
 
-const usage = `用法：
-  jumpdb token set [--configure]
-  jumpdb connect --id ID [--id-type auto|string|number] [--port PORT] [--show-password]
-  jumpdb ui [--no-open]
+// version 由发布构建通过 -ldflags "-X github.com/zK0G0w/jumpdb/internal/cli.version=<标签>" 注入；
+// 本地构建保持 dev，不冒充任何发布版本。
+var version = "dev"
 
-token set：首次隐藏录入门户、两把 16 字节原始密钥及 Token；以后仅更新 Token。
+const overviewUsage = `jumpdb：申请数据库运维会话，并在本机 127.0.0.1 提供数据库客户端可用的 TCP 隧道。
+
+用法：
+  jumpdb <命令> [参数]
+
+命令：
+  token set   录入或更新本地配置与 Token
+  connect     为指定资源启动本地隧道
+  ui          启动本地 Web 控制页，可同时管理多个隧道
+  version     显示版本
+
+运行 jumpdb <命令> --help 查看详情，例如 jumpdb connect --help。
+退出码：0 正常结束或取消；1 运行失败；2 参数错误。
+`
+
+const tokenSetUsage = `用法：
+  jumpdb token set [--configure]
+
+首次运行时隐藏录入门户 HTTPS 地址、两把 16 字节原始密钥及 Token；以后仅更新 Token。
+只接受交互终端输入，不接受凭据参数、管道或文件；保存时不验证 Token 是否有效。
+
+参数：
   --configure      显式重新录入全部配置；不迁移旧版配置
-connect：固定监听 127.0.0.1，Ctrl+C 停止并释放连接。
+
+示例：
+  jumpdb token set
+  jumpdb token set --configure
+`
+
+const connectUsage = `用法：
+  jumpdb connect --id ID [--id-type auto|string|number] [--port PORT] [--show-password]
+
+为指定资源启动本地隧道，固定监听 127.0.0.1；Ctrl+C 停止并释放连接。
+需先运行 jumpdb token set 完成配置。
+
+参数：
   --id             必填；自动将无前导零的十进制非负整数作为数字，其余作为字符串
   --id-type        默认 auto；string 保留数字字符串，number 强制 int64 非负整数
   --port           默认 9011，范围 1..65535
   --show-password  显式在终端显示初始会话密码；不复制到剪贴板
-ui：在 127.0.0.1 随机端口启动 Web 控制页，可录入配置、启动多个隧道并观测连接；
-  前台运行，Ctrl+C 停止控制页及全部隧道。控制页地址含本次运行的访问令牌。
+
+示例：
+  jumpdb connect --id 856
+  jumpdb connect --id RESOURCE_ID --port 9012
+
+说明：
+  监听、会话申请和代理握手分别报告；握手成功不代表数据库登录成功。
+  每个客户端连接重新申请会话；任一连接建立失败会停止整个隧道并退出 1。
+`
+
+const uiUsage = `用法：
+  jumpdb ui [--no-open]
+
+在 127.0.0.1 随机端口启动 Web 控制页，可录入配置、启动多个隧道并观测连接。
+前台运行，Ctrl+C 停止控制页及全部隧道。控制页地址含本次运行的访问令牌，请勿分享。
+
+参数：
   --no-open        不自动打开浏览器，只在终端打印地址
 
-监听、会话申请和代理握手分别报告；握手成功不代表数据库登录成功。
-每个客户端连接重新申请会话；任一连接建立失败会停止整个隧道并退出 1。
-退出码：0 正常结束或取消；1 运行失败；2 参数错误。
+示例：
+  jumpdb ui
+  jumpdb ui --no-open
 `
+
+const versionUsage = `用法：
+  jumpdb version
+  jumpdb --version
+
+显示版本及运行平台；本地自行构建的版本显示 dev。
+`
+
+// helpTopics 供 jumpdb help <命令> 查找子命令帮助；token 与 token set 指向同一份说明。
+var helpTopics = map[string]string{
+	"token": tokenSetUsage, "token set": tokenSetUsage, "connect": connectUsage, "ui": uiUsage, "version": versionUsage,
+}
 
 type sessionClient interface {
 	Login(context.Context, session.ResourceID) (secdb.Params, error)
@@ -76,23 +137,45 @@ func Run(ctx context.Context, args []string, input, output, errorOutput *os.File
 }
 
 func (app *application) run(ctx context.Context, args []string) int {
-	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		fmt.Fprint(app.out, usage)
+	if len(args) == 0 || len(args) == 1 && (isHelpFlag(args[0]) || args[0] == "help") {
+		fmt.Fprint(app.out, overviewUsage)
 		return 0
 	}
 	var err error
 	switch args[0] {
+	case "help":
+		text, ok := helpTopics[strings.Join(args[1:], " ")]
+		if !ok {
+			return app.argumentError("")
+		}
+		fmt.Fprint(app.out, text)
+		return 0
+	case "version", "--version":
+		flags := newFlags("version")
+		if parseErr := flags.Parse(args[1:]); parseErr != nil {
+			return app.flagError(parseErr, "version", versionUsage)
+		}
+		if flags.NArg() != 0 {
+			return app.argumentError("version")
+		}
+		fmt.Fprintf(app.out, "jumpdb %s (%s/%s)\n", version, runtime.GOOS, runtime.GOARCH)
+		return 0
 	case "token":
+		// token 目前只有 set 一个子命令，jumpdb token --help 直接给出它的说明。
+		if len(args) == 2 && isHelpFlag(args[1]) {
+			fmt.Fprint(app.out, tokenSetUsage)
+			return 0
+		}
 		if len(args) < 2 || args[1] != "set" {
-			return app.argumentError()
+			return app.argumentError("token set")
 		}
 		flags := newFlags("token set")
 		configure := flags.Bool("configure", false, "")
 		if parseErr := flags.Parse(args[2:]); parseErr != nil {
-			return app.flagError(parseErr)
+			return app.flagError(parseErr, "token set", tokenSetUsage)
 		}
 		if flags.NArg() != 0 {
-			return app.argumentError()
+			return app.argumentError("token set")
 		}
 		err = app.setToken(ctx, *configure)
 	case "connect":
@@ -102,25 +185,25 @@ func (app *application) run(ctx context.Context, args []string) int {
 		port := flags.Int("port", 9011, "")
 		showPassword := flags.Bool("show-password", false, "")
 		if parseErr := flags.Parse(args[1:]); parseErr != nil {
-			return app.flagError(parseErr)
+			return app.flagError(parseErr, "connect", connectUsage)
 		}
 		resource, parseErr := config.ParseResourceID(*id, *idType)
 		if flags.NArg() != 0 || parseErr != nil || *port < 1 || *port > 65535 {
-			return app.argumentError()
+			return app.argumentError("connect")
 		}
 		err = app.connect(ctx, resource, *port, *showPassword)
 	case "ui":
 		flags := newFlags("ui")
 		noOpen := flags.Bool("no-open", false, "")
 		if parseErr := flags.Parse(args[1:]); parseErr != nil {
-			return app.flagError(parseErr)
+			return app.flagError(parseErr, "ui", uiUsage)
 		}
 		if flags.NArg() != 0 {
-			return app.argumentError()
+			return app.argumentError("ui")
 		}
 		err = app.serveUI(ctx, !*noOpen)
 	default:
-		return app.argumentError()
+		return app.argumentError("")
 	}
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 		fmt.Fprintln(app.out, "已取消，监听器及活跃连接已关闭；未完成的录入不会保存。")
@@ -139,16 +222,26 @@ func newFlags(name string) *flag.FlagSet {
 	return flags
 }
 
-func (app *application) flagError(err error) int {
-	if errors.Is(err, flag.ErrHelp) {
-		fmt.Fprint(app.out, usage)
-		return 0
-	}
-	return app.argumentError()
+func isHelpFlag(arg string) bool {
+	return arg == "-h" || arg == "--help"
 }
 
-func (app *application) argumentError() int {
-	fmt.Fprintln(app.errOut, "jumpdb: 参数错误；请运行 jumpdb --help。参数值不会回显。")
+// flagError 在 -h/--help 时输出该子命令的帮助，其他解析错误按参数错误处理。
+func (app *application) flagError(err error, command, text string) int {
+	if errors.Is(err, flag.ErrHelp) {
+		fmt.Fprint(app.out, text)
+		return 0
+	}
+	return app.argumentError(command)
+}
+
+// argumentError 只提示对应命令的帮助入口，不回显参数值，避免误输入的凭据进入终端记录；command 为空时指向总帮助。
+func (app *application) argumentError(command string) int {
+	hint := "jumpdb --help"
+	if command != "" {
+		hint = "jumpdb " + command + " --help"
+	}
+	fmt.Fprintf(app.errOut, "jumpdb: 参数错误；请运行 %s。参数值不会回显。\n", hint)
 	return 2
 }
 

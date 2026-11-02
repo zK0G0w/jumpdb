@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -81,16 +82,101 @@ func TestArgumentsAndNonInteractiveInput(t *testing.T) {
 			t.Fatal("参数错误泄露输入")
 		}
 	}
-	for _, args := range [][]string{nil, {"--help"}, {"token", "set", "--help"}, {"connect", "--help"}} {
-		app, output, _ := testApp(t)
-		if app.run(context.Background(), args) != 0 || !strings.Contains(output.String(), "--show-password") {
-			t.Fatal("帮助不可用")
-		}
-	}
 	app, _, _ := testApp(t)
 	app.inputTerminal = false
 	if app.run(context.Background(), []string{"token", "set"}) != 1 {
 		t.Fatal("应拒绝非终端输入")
+	}
+}
+
+// runSeparated 分开收集标准输出与标准错误，用于确认帮助、版本和参数错误各自的输出位置。
+func runSeparated(t *testing.T, args []string) (int, string, string) {
+	t.Helper()
+	app, _, _ := testApp(t)
+	out, errOut := &safeBuffer{}, &safeBuffer{}
+	app.out, app.errOut = out, errOut
+	return app.run(context.Background(), args), out.String(), errOut.String()
+}
+
+func TestHelpOverviewAndSubcommands(t *testing.T) {
+	for _, args := range [][]string{nil, {"--help"}, {"-h"}, {"help"}} {
+		code, out, errOut := runSeparated(t, args)
+		if code != 0 || errOut != "" {
+			t.Fatalf("%q 总帮助退出码 %d，错误输出 %q", args, code, errOut)
+		}
+		for _, want := range []string{"token set", "connect", "ui", "version", "jumpdb <命令> --help"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("%q 总帮助缺少 %q", args, want)
+			}
+		}
+		// 总帮助只列命令，参数细节由子命令帮助提供。
+		if strings.Contains(out, "--show-password") {
+			t.Fatalf("%q 总帮助不应展开子命令参数", args)
+		}
+	}
+	cases := []struct {
+		forms   [][]string
+		want    []string
+		without string
+	}{
+		{[][]string{{"connect", "--help"}, {"connect", "-h"}, {"help", "connect"}, {"connect", "--id", "856", "-h"}}, []string{"jumpdb connect --id", "--show-password", "--id-type", "示例"}, "--configure"},
+		{[][]string{{"token", "set", "--help"}, {"token", "--help"}, {"help", "token"}, {"help", "token", "set"}}, []string{"jumpdb token set", "--configure", "示例"}, "--show-password"},
+		{[][]string{{"ui", "--help"}, {"ui", "-h"}, {"help", "ui"}}, []string{"jumpdb ui", "--no-open"}, "--show-password"},
+		{[][]string{{"version", "--help"}, {"help", "version"}}, []string{"jumpdb version", "jumpdb --version"}, "--show-password"},
+	}
+	for _, item := range cases {
+		for _, args := range item.forms {
+			code, out, errOut := runSeparated(t, args)
+			if code != 0 || errOut != "" {
+				t.Fatalf("%q 帮助退出码 %d，错误输出 %q", args, code, errOut)
+			}
+			for _, want := range item.want {
+				if !strings.Contains(out, want) {
+					t.Fatalf("%q 帮助缺少 %q", args, want)
+				}
+			}
+			if strings.Contains(out, item.without) {
+				t.Fatalf("%q 帮助混入其他命令的参数 %q", args, item.without)
+			}
+		}
+	}
+}
+
+func TestVersionOutput(t *testing.T) {
+	for _, args := range [][]string{{"version"}, {"--version"}} {
+		code, out, errOut := runSeparated(t, args)
+		// 未经 ldflags 注入的构建只能报告 dev，不冒充任何发布版本。
+		if want := "jumpdb dev (" + runtime.GOOS + "/" + runtime.GOARCH + ")\n"; code != 0 || out != want || errOut != "" {
+			t.Fatalf("%q 版本输出为 %d %q %q，期望 %q", args, code, out, errOut, want)
+		}
+	}
+	if code, _, _ := runSeparated(t, []string{"version", "extra"}); code != 2 {
+		t.Fatalf("version 多余参数退出码为 %d", code)
+	}
+}
+
+func TestArgumentErrorsPointToCommandHelp(t *testing.T) {
+	cases := []struct {
+		args []string
+		hint string
+	}{
+		{[]string{"unknown-private-argument"}, "jumpdb --help"},
+		{[]string{"help", "unknown-private-argument"}, "jumpdb --help"},
+		{[]string{"connect", "--port", "0"}, "jumpdb connect --help"},
+		{[]string{"connect", "--id", "856", "--bogus", "fixture-token"}, "jumpdb connect --help"},
+		{[]string{"token"}, "jumpdb token set --help"},
+		{[]string{"token", "set", "fixture-token"}, "jumpdb token set --help"},
+		{[]string{"ui", "fixture-token"}, "jumpdb ui --help"},
+		{[]string{"version", "fixture-token"}, "jumpdb version --help"},
+	}
+	for _, item := range cases {
+		code, out, errOut := runSeparated(t, item.args)
+		if code != 2 || out != "" || !strings.Contains(errOut, "请运行 "+item.hint+"。") {
+			t.Fatalf("%q 参数错误输出为 %d %q %q，期望提示 %q", item.args, code, out, errOut, item.hint)
+		}
+		if strings.Contains(errOut, "fixture-token") || strings.Contains(errOut, "unknown-private") || strings.Contains(errOut, "bogus") {
+			t.Fatalf("%q 参数错误回显了输入", item.args)
+		}
 	}
 }
 
