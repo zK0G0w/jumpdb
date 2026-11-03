@@ -222,13 +222,13 @@ while [ $# -gt 0 ]; do
 done
 echo "$url" >> "$FAKE_CURL_LOG"
 case "$url" in
-  {prefix}latest/download/*) source="$FAKE_RELEASES/latest/${{url##*/}}" ;;
-  {prefix}download/*) rest=${{url#{prefix}download/}}; source="$FAKE_RELEASES/${{rest%%/*}}/${{url##*/}}" ;;
+  {prefix}latest/download/*) source="$FAKE_RELEASES/latest/${url##*/}" ;;
+  {prefix}download/*) rest=${url#{prefix}download/}; source="$FAKE_RELEASES/${rest%%/*}/${url##*/}" ;;
   *) exit 22 ;;
 esac
 [ -f "$source" ] || exit 22
 cp "$source" "$output"
-""".replace("{prefix}", RELEASES_PREFIX).replace("{{", "{").replace("}}", "}")
+""".replace("{prefix}", RELEASES_PREFIX)
 
 FAKE_UNAME = """#!/bin/sh
 case "$1" in
@@ -288,6 +288,13 @@ def check_install(binary):
         make_release(home / "releases" / "latest", binary)
         make_release(home / "releases" / "v0.0.0-smoke", binary)
         make_release(home / "releases" / "v0.0.0-corrupt", binary, corrupt=True)
+        # 模拟早于 version 命令的旧版（如 v0.0.1）及无法在本机运行的二进制。
+        legacy = home / "legacy-jumpdb"
+        write_executable(legacy, "#!/bin/sh\ncase \"$1\" in --help) exit 0 ;; *) exit 2 ;; esac\n")
+        make_release(home / "releases" / "v0.0.0-legacy", legacy)
+        broken = home / "broken-jumpdb"
+        write_executable(broken, "#!/bin/sh\nexit 1\n")
+        make_release(home / "releases" / "v0.0.0-broken", broken)
         default_dir = home / ".local" / "bin"
         target = default_dir / "jumpdb"
 
@@ -312,6 +319,24 @@ def check_install(binary):
         require("不在 PATH 中" not in output and "警告" not in output, "目录已在 PATH 时不应提示")
         require(all(line.startswith(RELEASES_PREFIX + "download/v0.0.0-smoke/")
                     for line in (home / "curl.log").read_text().splitlines()), "未使用指定版本下载")
+
+        # PATH 条目带尾斜杠或经符号链接指向安装目录时，既不提示缺失也不误报冲突。
+        link = home / "linked-bin"
+        link.symlink_to(default_dir)
+        for entry in [f"{default_dir}/", link]:
+            result = run_install(home, fake_bin, [entry])
+            output = result.stdout.decode()
+            require(result.returncode == 0 and "不在 PATH 中" not in output and "警告" not in output, f"PATH 条目 {entry} 被误判")
+
+        # 新二进制无法运行时不替换原文件；不支持 version 的旧版仍可安装并标明版本未知。
+        result = run_install(home, fake_bin, [], {"JUMPDB_VERSION": "v0.0.0-broken"})
+        require(result.returncode == 1 and "无法在本机运行" in result.stderr.decode(), "未拒绝无法运行的二进制")
+        require(target.read_bytes() == binary_bytes, "无法运行的二进制替换了原文件")
+        require(sorted(path.name for path in default_dir.iterdir()) == ["jumpdb"], "拒绝安装后残留临时文件")
+        result = run_install(home, fake_bin, [], {"JUMPDB_VERSION": "v0.0.0-legacy"})
+        require(result.returncode == 0 and f"{expected_version} → 版本未知（该版本不支持 version 命令）" in result.stdout.decode(), "旧版安装未标明版本未知")
+        result = run_install(home, fake_bin, [])
+        require(result.returncode == 0 and target.read_bytes() == binary_bytes, "恢复最新版失败")
 
         # PATH 中更靠前的同名二进制需要警告。
         shadow = home / "shadow"

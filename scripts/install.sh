@@ -36,13 +36,18 @@ detect_arch() {
 	esac
 }
 
-# 输出已安装二进制的版本；早于 version 命令的版本或无法运行时返回提示文字。
+# 输出二进制的版本；v0.0.1 等早于 version 命令的版本无法读取时输出第二个参数的提示文字。
 binary_version() {
 	output="$("$1" version 2>/dev/null)" || {
-		echo "旧版本（不支持 version 命令）"
+		echo "$2"
 		return
 	}
 	echo "$output" | awk '{print $2}'
+}
+
+# 输出目录解析符号链接后的物理路径，目录不存在时输出空；用于与 PATH 条目比较，避免尾斜杠或链接造成误判。
+physical_dir() {
+	(cd "$1" 2>/dev/null && pwd -P) || true
 }
 
 main() {
@@ -95,13 +100,15 @@ main() {
 	target="$install_dir/jumpdb"
 	previous=""
 	if [ -e "$target" ]; then
-		previous="$(binary_version "$target")"
+		previous="$(binary_version "$target" "旧版本（不支持 version 命令）")"
 	fi
 	# 先写入同目录临时文件再 rename，替换是原子的，正在运行的旧进程不受影响。
 	staged="$install_dir/.jumpdb.install.$$"
 	cp "$work/extract/jumpdb" "$staged" || fail "无法写入安装目录 $install_dir"
 	chmod 755 "$staged"
-	installed="$(binary_version "$staged")"
+	# 替换前确认新文件能在本机运行；用 --help 而非 version，以便仍可安装不支持 version 的旧版本。
+	"$staged" --help >/dev/null 2>&1 || fail "新下载的 jumpdb 无法在本机运行，已保留原有文件"
+	installed="$(binary_version "$staged" "版本未知（该版本不支持 version 命令）")"
 	mv -f "$staged" "$target" || fail "无法替换 $target"
 	staged=""
 
@@ -111,16 +118,30 @@ main() {
 		echo "已安装 $target：$installed"
 	fi
 
-	case ":$PATH:" in
-	*":$install_dir:"*) ;;
-	*)
+	install_physical="$(physical_dir "$install_dir")"
+	in_path=no
+	old_ifs=$IFS
+	IFS=:
+	set -f
+	for entry in $PATH; do
+		if [ -n "$entry" ] && [ "$(physical_dir "$entry")" = "$install_physical" ]; then
+			in_path=yes
+			break
+		fi
+	done
+	set +f
+	IFS=$old_ifs
+	if [ "$in_path" = no ]; then
 		echo
 		echo "注意：$install_dir 不在 PATH 中。可在 ~/.zshrc 中加入下面一行，然后重新打开终端："
 		echo "  export PATH=\"$install_dir:\$PATH\""
-		;;
-	esac
+	fi
 	resolved="$(command -v jumpdb 2>/dev/null || true)"
-	if [ -n "$resolved" ] && [ "$resolved" != "$target" ]; then
+	case "$resolved" in
+	/*) resolved_physical="$(physical_dir "${resolved%/*}")" ;;
+	*) resolved_physical="" ;;
+	esac
+	if [ -n "$resolved" ] && [ "$resolved_physical" != "$install_physical" ]; then
 		echo
 		echo "警告：当前 PATH 中优先生效的 jumpdb 是 $resolved，不是刚安装的 $target。"
 		echo "请删除或调整那个文件在 PATH 中的位置。"
