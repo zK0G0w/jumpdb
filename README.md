@@ -24,8 +24,8 @@ curl -fsSL https://github.com/zK0G0w/jumpdb/releases/latest/download/install.sh 
 # 安装指定版本（包括预发布版）
 curl -fsSL https://github.com/zK0G0w/jumpdb/releases/latest/download/install.sh | JUMPDB_VERSION=v0.1.0 sh
 
-# 安装到其他目录（必须是绝对路径；目录需有写权限）
-curl -fsSL https://github.com/zK0G0w/jumpdb/releases/latest/download/install.sh | JUMPDB_INSTALL_DIR=/usr/local/bin sh
+# 安装到其他目录（必须是绝对路径，当前用户需有写权限；脚本不会使用 sudo）
+curl -fsSL https://github.com/zK0G0w/jumpdb/releases/latest/download/install.sh | JUMPDB_INSTALL_DIR="$HOME/bin" sh
 ```
 
 如果提示安装目录不在 `PATH` 中，在 `~/.zshrc` 末尾加上下面一行，然后重新打开终端：
@@ -64,7 +64,7 @@ mv jumpdb ~/.local/bin/
 
 ### 首次运行被 macOS 拦截
 
-发布的二进制没有 Developer ID 签名和公证。通过浏览器下载的文件带有隔离属性，首次运行时可能被 macOS 拦截，提示无法验证该文件。如果你信任该文件，可以打开“系统设置 → 隐私与安全性”，在页面下方点击“仍要打开”，然后重新运行。一键安装通过 `curl` 下载，不带隔离属性，一般不会出现该提示。公司管理的设备请按公司策略处理。
+发布的二进制没有 Developer ID 签名和公证。通过浏览器下载的文件带有隔离属性，首次运行时可能被 macOS 拦截，提示无法验证该文件。如果你信任该文件，可以打开“系统设置 → 隐私与安全性”，在页面下方点击“仍要打开”，然后重新运行。一键安装通过 `curl` 下载，文件不带隔离属性，按 macOS 的机制通常不会出现该提示，但尚未在真实环境中实测。公司管理的设备请按公司策略处理。
 
 `SHA256SUMS` 与压缩包来自同一 Release，只能发现下载损坏，不能证明来源。
 
