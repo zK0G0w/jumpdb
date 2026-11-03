@@ -39,7 +39,6 @@ const overviewUsage = `jumpdb：申请数据库运维会话，并在本机 127.0
   version     显示版本
 
 运行 jumpdb <命令> --help 查看详情，例如 jumpdb connect --help。
-退出码：0 正常结束或取消；1 运行失败；2 参数错误。
 `
 
 const tokenSetUsage = `用法：
@@ -54,6 +53,8 @@ const tokenSetUsage = `用法：
 示例：
   jumpdb token set
   jumpdb token set --configure
+
+退出码：0 正常结束或取消；1 运行失败；2 参数错误。
 `
 
 const connectUsage = `用法：
@@ -75,6 +76,8 @@ const connectUsage = `用法：
 说明：
   监听、会话申请和代理握手分别报告；握手成功不代表数据库登录成功。
   每个客户端连接重新申请会话；任一连接建立失败会停止整个隧道并退出 1。
+
+退出码：0 正常结束或取消；1 运行失败；2 参数错误。
 `
 
 const uiUsage = `用法：
@@ -89,6 +92,8 @@ const uiUsage = `用法：
 示例：
   jumpdb ui
   jumpdb ui --no-open
+
+退出码：0 正常结束或取消；1 运行失败；2 参数错误。
 `
 
 const versionUsage = `用法：

@@ -109,8 +109,8 @@ func TestHelpOverviewAndSubcommands(t *testing.T) {
 				t.Fatalf("%q 总帮助缺少 %q", args, want)
 			}
 		}
-		// 总帮助只列命令，参数细节由子命令帮助提供。
-		if strings.Contains(out, "--show-password") {
+		// 总帮助只列命令，参数细节及退出码由子命令帮助提供。
+		if strings.Contains(out, "--show-password") || strings.Contains(out, "退出码") {
 			t.Fatalf("%q 总帮助不应展开子命令参数", args)
 		}
 	}
@@ -119,9 +119,9 @@ func TestHelpOverviewAndSubcommands(t *testing.T) {
 		want    []string
 		without string
 	}{
-		{[][]string{{"connect", "--help"}, {"connect", "-h"}, {"help", "connect"}, {"connect", "--id", "856", "-h"}}, []string{"jumpdb connect --id", "--show-password", "--id-type", "示例"}, "--configure"},
-		{[][]string{{"token", "set", "--help"}, {"token", "--help"}, {"help", "token"}, {"help", "token", "set"}}, []string{"jumpdb token set", "--configure", "示例"}, "--show-password"},
-		{[][]string{{"ui", "--help"}, {"ui", "-h"}, {"help", "ui"}}, []string{"jumpdb ui", "--no-open"}, "--show-password"},
+		{[][]string{{"connect", "--help"}, {"connect", "-h"}, {"help", "connect"}, {"connect", "--id", "856", "-h"}}, []string{"jumpdb connect --id", "--show-password", "--id-type", "示例", "退出码"}, "--configure"},
+		{[][]string{{"token", "set", "--help"}, {"token", "--help"}, {"help", "token"}, {"help", "token", "set"}}, []string{"jumpdb token set", "--configure", "示例", "退出码"}, "--show-password"},
+		{[][]string{{"ui", "--help"}, {"ui", "-h"}, {"help", "ui"}}, []string{"jumpdb ui", "--no-open", "退出码"}, "--show-password"},
 		{[][]string{{"version", "--help"}, {"help", "version"}}, []string{"jumpdb version", "jumpdb --version"}, "--show-password"},
 	}
 	for _, item := range cases {
