@@ -270,6 +270,9 @@ def run_install(home, fake_bin, path_entries, extra_env=None):
     env = {
         "HOME": str(home), "PATH": ":".join([str(fake_bin), *map(str, path_entries), "/usr/bin", "/bin", "/usr/sbin"]),
         "FAKE_RELEASES": str(home / "releases"), "FAKE_CURL_LOG": str(home / "curl.log"),
+        # 真实终端是 UTF-8：macOS 自带 /bin/sh 在此 locale 下会把 "$var（" 的全角字节并入变量名，
+        # 干净环境（C locale）不会暴露，所以默认用 UTF-8 locale 运行。
+        "LANG": "en_US.UTF-8",
         **(extra_env or {}),
     }
     return subprocess.run(["/bin/sh", str(INSTALL_SCRIPT)], env=env, stdin=subprocess.DEVNULL,

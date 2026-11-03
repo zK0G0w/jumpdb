@@ -84,7 +84,7 @@ main() {
 	trap 'rm -rf "$work"; [ -z "$staged" ] || rm -f "$staged"' EXIT
 	trap 'exit 1' HUP INT TERM
 
-	echo "下载 $asset（$version）……"
+	echo "下载 ${asset}（${version}）……"
 	curl -fsSL --proto =https --tlsv1.2 -o "$work/$asset" "$base/$asset" || fail "下载 $asset 失败，请确认版本存在且网络可用"
 	curl -fsSL --proto =https --tlsv1.2 -o "$work/SHA256SUMS" "$base/SHA256SUMS" || fail "下载 SHA256SUMS 失败"
 	expected="$(awk -v name="$asset" '$2 == name || $2 == "*" name {print $1}' "$work/SHA256SUMS")"
@@ -113,9 +113,9 @@ main() {
 	staged=""
 
 	if [ -n "$previous" ]; then
-		echo "已升级 $target：$previous → $installed"
+		echo "已升级 ${target}：${previous} → ${installed}"
 	else
-		echo "已安装 $target：$installed"
+		echo "已安装 ${target}：${installed}"
 	fi
 
 	install_physical="$(physical_dir "$install_dir")"
@@ -143,7 +143,7 @@ main() {
 	esac
 	if [ -n "$resolved" ] && [ "$resolved_physical" != "$install_physical" ]; then
 		echo
-		echo "警告：当前 PATH 中优先生效的 jumpdb 是 $resolved，不是刚安装的 $target。"
+		echo "警告：当前 PATH 中优先生效的 jumpdb 是 ${resolved}，不是刚安装的 ${target}。"
 		echo "请删除或调整那个文件在 PATH 中的位置。"
 	fi
 
