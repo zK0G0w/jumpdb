@@ -144,7 +144,8 @@ exit `$code
 	$childFile = Join-Path $caseDir 'child.ps1'
 	[IO.File]::WriteAllText($childFile, $child, $utf8Bom)
 	$info = New-Object Diagnostics.ProcessStartInfo
-	$info.FileName = $shell
+	# 用完整路径启动，不依赖 CreateProcess 对裸名称的搜索规则。
+	$info.FileName = @(Get-Command $shell -CommandType Application)[0].Path
 	$info.Arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$childFile`""
 	$info.UseShellExecute = $false
 	$info.RedirectStandardOutput = $true
@@ -165,6 +166,8 @@ function Assert([bool]$condition, [string]$message, $result) {
 	$detail = ''
 	if ($result) { $detail = "`n  exit=$($result.Code)`n  stdout: $($result.Out)`n  stderr: $($result.Err)" }
 	$failures.Add("[$script:currentShell] $message$detail")
+	# 立即输出，后续用例异常中止时也能看到最早的失败。
+	[Console]::Error.WriteLine("FAIL [$script:currentShell] $message$detail")
 }
 
 function Assert-Contains([string]$text, [string]$expected, [string]$message, $result) {
@@ -322,6 +325,10 @@ if (Get-Command Fail -ErrorAction SilentlyContinue) { Write-Output 'LEAKED' }
 		$dir = Join-Path $local 'Programs\jumpdb'
 		$target = Join-Path $dir 'jumpdb.exe'
 		Install-Good $shell $local
+		if (-not (Test-Path -LiteralPath $target)) {
+			Assert $false '前置安装未产生 jumpdb.exe，跳过运行中替换用例' $null
+			continue
+		}
 		$uiInfo = New-Object Diagnostics.ProcessStartInfo
 		$uiInfo.FileName = $target
 		$uiInfo.Arguments = 'ui --no-open'
@@ -385,6 +392,10 @@ if (Get-Command Fail -ErrorAction SilentlyContinue) { Write-Output 'LEAKED' }
 			Assert ($result.Uris.Count -eq 0) "$($case.Name)：不应发起下载" $result
 		}
 	}
+} catch {
+	# 记录意外异常的位置，避免只看到一行没有行号的错误。
+	$failures.Add("[$script:currentShell] 意外异常：$($_.Exception.Message)`n$($_.ScriptStackTrace)")
+	[Console]::Error.WriteLine("FAIL " + $failures[$failures.Count - 1])
 } finally {
 	if ($uiProcess -and -not $uiProcess.HasExited) { $uiProcess.Kill(); $uiProcess.WaitForExit() }
 	Set-UserPathState $originalPath
@@ -394,7 +405,7 @@ if (Get-Command Fail -ErrorAction SilentlyContinue) { Write-Output 'LEAKED' }
 }
 
 if ($failures.Count -gt 0) {
-	foreach ($failure in $failures) { [Console]::Error.WriteLine("FAIL $failure") }
+	[Console]::Error.WriteLine("install.ps1 Windows 合成 smoke 失败：共 $($failures.Count) 项，详见上方 FAIL 行。")
 	exit 1
 }
 Write-Host "install.ps1 Windows 合成 smoke 通过（$($Shells -join '、')）：irm 解码、首次安装与升级、旧版覆盖、指定版本与目录、用户 PATH 写入与去重、冲突警告、运行中替换、校验失败与无法运行时保留原文件、参数与架构错误。"
