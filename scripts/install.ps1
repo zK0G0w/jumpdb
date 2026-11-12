@@ -105,7 +105,9 @@
 		# 借助 .NET 写入用户变量时自带的 WM_SETTINGCHANGE 广播，写入后立即删除这个临时变量，避免编译 P/Invoke 代码。
 		try {
 			[Environment]::SetEnvironmentVariable('JUMPDB_INSTALL_NOTIFY', '1', 'User')
-			[Environment]::SetEnvironmentVariable('JUMPDB_INSTALL_NOTIFY', $null, 'User')
+			# PowerShell 会把传给 string 参数的 $null 转成空字符串，PowerShell 7 下空字符串不会删除用户变量；
+			# [NullString]::Value 才能传入真正的 null。
+			[Environment]::SetEnvironmentVariable('JUMPDB_INSTALL_NOTIFY', [NullString]::Value, 'User')
 		} catch {
 			Write-Host '提示：未能通知系统刷新环境变量，新终端可能需要注销并重新登录后才能找到 jumpdb。'
 		}
