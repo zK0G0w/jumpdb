@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 
-	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 )
 
@@ -34,20 +33,15 @@ type terminalIO struct {
 }
 
 func (terminal *terminalIO) Read(buffer []byte) (int, error) {
-	descriptors := []unix.PollFd{{Fd: int32(terminal.input.Fd()), Events: unix.POLLIN}}
 	for {
 		if err := terminal.ctx.Err(); err != nil {
 			return 0, err
 		}
-		// 定期检查取消，避免信号到达时阻塞在终端读取，确保恢复回显。
-		count, err := unix.Poll(descriptors, 100)
-		if errors.Is(err, unix.EINTR) {
-			continue
-		}
+		ready, err := waitReadable(terminal.input)
 		if err != nil {
 			return 0, err
 		}
-		if count > 0 {
+		if ready {
 			return terminal.input.Read(buffer)
 		}
 	}

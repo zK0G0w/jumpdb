@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -35,6 +36,8 @@ func TestDefaultPath(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("HOME", test.home)
+			// Windows 的 os.UserHomeDir 读取 USERPROFILE。
+			t.Setenv("USERPROFILE", test.home)
 			t.Setenv("XDG_CONFIG_HOME", test.xdg)
 			path, err := config.DefaultPath()
 			if (err != nil) != test.wantErr || path != test.want {
@@ -54,21 +57,26 @@ func TestSaveLoadAndPermissions(t *testing.T) {
 		if err := config.Save(path, data); err != nil {
 			t.Fatal(err)
 		}
-		for target, permission := range map[string]os.FileMode{path: 0600, filepath.Dir(path): 0700} {
-			info, err := os.Stat(target)
-			if err != nil || info.Mode().Perm() != permission {
-				t.Fatal("权限不正确")
+		// Windows 只有只读位，没有 Unix 权限位，权限断言仅适用于类 Unix 系统。
+		if runtime.GOOS != "windows" {
+			for target, permission := range map[string]os.FileMode{path: 0600, filepath.Dir(path): 0700} {
+				info, err := os.Stat(target)
+				if err != nil || info.Mode().Perm() != permission {
+					t.Fatal("权限不正确")
+				}
 			}
 		}
 		loaded, err := config.Load(path)
 		if err != nil || !reflect.DeepEqual(loaded, data) {
 			t.Fatal("保存后读取不一致")
 		}
-		if err := os.Chmod(path, 0644); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := config.Load(path); err == nil {
-			t.Fatal("不应读取权限过宽的文件")
+		if runtime.GOOS != "windows" {
+			if err := os.Chmod(path, 0644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := config.Load(path); err == nil {
+				t.Fatal("不应读取权限过宽的文件")
+			}
 		}
 		data.Token = "fixture-updated-token"
 	}
@@ -103,6 +111,10 @@ func TestRejectsSymlinksAndMalformedFiles(t *testing.T) {
 	}
 	link := filepath.Join(directory, "link")
 	if err := os.Symlink(target, link); err != nil {
+		// Windows 创建符号链接需要特权，普通账户和 CI 环境可能没有。
+		if runtime.GOOS == "windows" {
+			t.Skip("当前环境无权创建符号链接")
+		}
 		t.Fatal(err)
 	}
 	if _, err := config.Load(link); err == nil {
