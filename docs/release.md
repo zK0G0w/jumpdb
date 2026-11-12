@@ -40,7 +40,7 @@ Release 说明由 `release.yml` 生成，给出固定到本标签的安装命令
 - 与 `install.sh` 相同：默认 `latest`（只指向最新稳定版），`JUMPDB_VERSION` 指定版本，仓库路径写死，不提供可改下载来源的开关；先写同目录临时文件，确认能运行后再替换。
 - 默认目录 `%LOCALAPPDATA%\Programs\jumpdb`，`JUMPDB_INSTALL_DIR` 覆盖。与 `install.sh` 不同，它会把安装目录追加到**当前用户**的 `PATH`（直接写 `HKCU\Environment`，保留值类型与未展开的 `%VAR%` 条目），不修改系统 `PATH`，不需要管理员权限，不执行 `Unblock-File`。
 - 必须兼容 Windows PowerShell 5.1：不用 `??`、三元运算符、`&&` 等 PowerShell 7 语法；运行原生命令时临时放宽 `$ErrorActionPreference`。
-- 文件必须保持 UTF-8 BOM：Release 资产响应没有 charset，`Invoke-RestMethod` 靠 BOM 解码中文。编辑器去掉 BOM 时，smoke 的中文断言会失败。
+- 文件保存为**无 BOM** 的 UTF-8。Release 资产响应没有 charset，Windows PowerShell 5.1 的 `irm` 按 ISO-8859-1 解码且忽略 BOM（CI run `43142975259` 实测：BOM 变成 `ï»¿` 与首行 `#` 连成命令名，中文乱码，安装失败）。所以安装命令写成 `iex ([Text.Encoding]::UTF8.GetString((iwr -useb <地址>).Content))`，README、Release 说明与 smoke 必须一致，不能改回 `irm | iex`。smoke 会拒绝带 BOM 的 `install.ps1`。
 - 通过 `iex` 执行时与用户共用会话：逻辑全部放在 `& { }` 脚本块内，失败时用 `$LASTEXITCODE` 而不是 `exit`，避免关闭用户的终端。
 - 运行中的 `jumpdb.exe` 不能覆盖但可以改名：先把旧文件改名为 `.jumpdb.old.<PID>.exe`，删不掉时留到下次安装清理。
 - 压缩包的文件名或内容结构变化时，`install.ps1` 与 smoke 中的 `New-Release` 需一起修改。

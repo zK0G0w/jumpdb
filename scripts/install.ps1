@@ -1,7 +1,7 @@
-﻿# jumpdb Windows 安装脚本：下载本机架构的发布包，按 SHA256SUMS 校验后安装到用户目录，并把安装目录加入当前用户的 PATH。
+# jumpdb Windows 安装脚本：下载本机架构的发布包，按 SHA256SUMS 校验后安装到用户目录，并把安装目录加入当前用户的 PATH。
 #
 # 用法（PowerShell）：
-#   irm https://github.com/zK0G0w/jumpdb/releases/latest/download/install.ps1 | iex
+#   iex ([Text.Encoding]::UTF8.GetString((iwr -useb https://github.com/zK0G0w/jumpdb/releases/latest/download/install.ps1).Content))
 #
 # 环境变量：
 #   JUMPDB_VERSION      要安装的标签，例如 v0.1.0；默认最新稳定版
@@ -10,8 +10,9 @@
 # 不需要管理员权限，只修改当前用户的 PATH，不读取或改动 jumpdb 配置，也不解除下载文件的安全标记（不执行 Unblock-File）。
 # 校验和与压缩包来自同一 Release，只能发现下载损坏，不能证明来源。
 #
-# 兼容 Windows PowerShell 5.1 与 PowerShell 7。文件以 UTF-8 BOM 保存：Release 资产的响应没有 charset，
-# Invoke-RestMethod 依靠 BOM 才能正确解码中文。
+# 兼容 Windows PowerShell 5.1 与 PowerShell 7。文件以无 BOM 的 UTF-8 保存。Release 资产的响应没有 charset，
+# Windows PowerShell 5.1 的 irm 会按 ISO-8859-1 解码并忽略 BOM，中文乱码且脚本无法执行，
+# 所以安装命令取原始字节自行按 UTF-8 解码，不能写成 irm | iex。
 # 通过 iex 执行时与调用者共用会话，因此全部逻辑放在脚本块内，不留下函数或变量；失败时不调用 exit，避免关闭用户的终端窗口。
 
 & {

@@ -1,11 +1,12 @@
-﻿# install.ps1 的 Windows 合成 smoke：用给定的 jumpdb.exe 构造本地 Release 资产，逐个用例在子进程中执行 irm | iex。
+﻿# install.ps1 的 Windows 合成 smoke：用给定的 jumpdb.exe 构造本地 Release 资产，逐个用例在子进程中执行 README 中的安装命令。
 #
 # 用法：
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke_install_windows.ps1 -Binary <jumpdb.exe>
 #
 # - install.ps1 由本机 127.0.0.1 回环服务以 application/octet-stream（无 charset，与 GitHub Release 资产相同）提供，
-#   真实走 Invoke-RestMethod 解码，验证 UTF-8 BOM 下中文提示不乱码。
-# - 资产下载通过子进程中同名的 Invoke-WebRequest 函数从本地目录提供；install.ps1 本身不提供改下载来源的开关。
+#   子进程按文档命令取原始字节自行 UTF-8 解码后 iex，验证中文提示不乱码（irm | iex 在 5.1 下会乱码且无法执行）。
+# - 资产下载通过子进程中同名的 Invoke-WebRequest 函数从本地目录提供，回环地址仍交给真实 cmdlet；
+#   install.ps1 本身不提供改下载来源的开关。
 # - 会读写当前用户的 PATH（HKCU\Environment），结束时恢复原值；只应在 CI runner 或可丢弃的环境中运行。
 # - 默认依次用 Windows PowerShell 5.1 与 PowerShell 7（若已安装）作为执行 install.ps1 的 shell。
 
@@ -24,6 +25,13 @@ $Binary = (Resolve-Path -LiteralPath $Binary).Path
 $utf8Bom = New-Object Text.UTF8Encoding($true)
 $utf8 = New-Object Text.UTF8Encoding($false)
 $failures = New-Object Collections.Generic.List[string]
+
+# 安装命令自行按 UTF-8 解码，BOM 会成为脚本开头的 U+FEFF；install.ps1 必须保存为无 BOM 的 UTF-8。
+$head = [IO.File]::ReadAllBytes($installer)
+if ($head.Length -ge 3 -and $head[0] -eq 0xEF -and $head[1] -eq 0xBB -and $head[2] -eq 0xBF) {
+	[Console]::Error.WriteLine('FAIL install.ps1 不应带 UTF-8 BOM')
+	exit 1
+}
 
 if (-not $Shells) {
 	$Shells = @('powershell')
@@ -110,7 +118,7 @@ function Set-UserPathState($state) {
 	}
 }
 
-# 在独立子进程中执行 irm | iex：$envs 为该进程的环境变量（值为 $null 表示删除），
+# 在独立子进程中执行文档中的安装命令：$envs 为该进程的环境变量（值为 $null 表示删除），
 # $prelude / $postlude 为执行前后在同一会话中运行的代码。
 function Invoke-Installer([string]$shell, [hashtable]$envs, [string]$prelude, [string]$postlude) {
 	$caseDir = Join-Path $script:root ('case-' + [guid]::NewGuid().ToString('N'))
@@ -128,6 +136,7 @@ $($assignments -join "`n")
 `$uriLog = '$($uriLog.Replace("'", "''"))'
 function Invoke-WebRequest {
 	param([string]`$Uri, [string]`$OutFile, [switch]`$UseBasicParsing)
+	if (`$Uri.StartsWith('http://127.0.0.1:')) { return Microsoft.PowerShell.Utility\Invoke-WebRequest -Uri `$Uri -UseBasicParsing }
 	Add-Content -LiteralPath `$uriLog -Value `$Uri
 	if (`$Uri -notmatch '^https://github\.com/zK0G0w/jumpdb/releases/(latest/download|download/v[0-9A-Za-z.+-]+)/([^/]+)$') { throw 'unexpected uri' }
 	`$source = Join-Path `$fixtureDir `$Matches[2]
@@ -135,7 +144,7 @@ function Invoke-WebRequest {
 	Copy-Item -LiteralPath `$source -Destination `$OutFile
 }
 $prelude
-irm '$($script:server.Url)' | iex
+iex ([Text.Encoding]::UTF8.GetString((iwr -useb '$($script:server.Url)').Content))
 `$code = `$LASTEXITCODE
 Write-Output 'SESSION-ALIVE'
 $postlude
@@ -408,4 +417,4 @@ if ($failures.Count -gt 0) {
 	[Console]::Error.WriteLine("install.ps1 Windows 合成 smoke 失败：共 $($failures.Count) 项，详见上方 FAIL 行。")
 	exit 1
 }
-Write-Host "install.ps1 Windows 合成 smoke 通过（$($Shells -join '、')）：irm 解码、首次安装与升级、旧版覆盖、指定版本与目录、用户 PATH 写入与去重、冲突警告、运行中替换、校验失败与无法运行时保留原文件、参数与架构错误。"
+Write-Host "install.ps1 Windows 合成 smoke 通过（$($Shells -join '、')）：安装命令 UTF-8 解码、首次安装与升级、旧版覆盖、指定版本与目录、用户 PATH 写入与去重、冲突警告、运行中替换、校验失败与无法运行时保留原文件、参数与架构错误。"

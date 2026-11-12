@@ -17,7 +17,7 @@
 | `internal/tunnel` | 本机 TCP 隧道、代理握手与转发 |
 | `internal/ui` | 本地 Web 控制页（`go:embed` 原生前端） |
 | `scripts/install.sh` | macOS 用户安装脚本，作为 Release 资产分发 |
-| `scripts/install.ps1` | Windows 用户安装脚本，作为 Release 资产分发；以 UTF-8 BOM 保存 |
+| `scripts/install.ps1` | Windows 用户安装脚本，作为 Release 资产分发；以无 BOM 的 UTF-8 保存 |
 
 CLI 与协议逻辑分开；核心优先使用 Go 标准库，只为实际需求引入依赖。
 
@@ -75,9 +75,9 @@ Windows 不运行 `smoke_cli.py`，`install.ps1` 由下一节的脚本覆盖。
 
 ## smoke_install_windows.ps1
 
-`scripts/smoke_install_windows.ps1 -Binary <jumpdb.exe>` 在 CI `check-windows` 中运行，依次用 Windows PowerShell 5.1 与 PowerShell 7（若已安装）在独立子进程中执行真实的 `irm <回环地址> | iex`：
+`scripts/smoke_install_windows.ps1 -Binary <jumpdb.exe>` 在 CI `check-windows` 中运行，依次用 Windows PowerShell 5.1 与 PowerShell 7（若已安装）在独立子进程中原样执行 README 的安装命令（地址换成回环地址）：
 
-- `install.ps1` 由 `127.0.0.1` 回环服务以无 charset 的 `application/octet-stream`（与 GitHub Release 资产一致）提供，验证 UTF-8 BOM 下中文提示正确解码；
+- `install.ps1` 由 `127.0.0.1` 回环服务以无 charset 的 `application/octet-stream`（与 GitHub Release 资产一致）提供，验证自行按 UTF-8 解码后中文提示正确，并拒绝带 BOM 的 `install.ps1`；
 - 资产下载用子进程会话内同名的 `Invoke-WebRequest` 函数从本地目录提供，脚本本身不提供改下载来源的开关；
 - 覆盖首次安装（默认 `latest` 与默认目录、当前会话立即可用、不在调用者会话留下函数）、再次安装显示升级、覆盖不支持 `version` 的旧版、指定版本与带空格及末尾反斜杠的自定义目录、用户 `PATH` 写入与去重（保留值类型和 `%VAR%` 条目，不留临时变量）、冲突警告、旧版本运行中替换及之后的清理；
 - 校验和不一致、缺少条目、新文件无法运行、下载失败时退出码为 1、会话不被关闭、原文件与用户 `PATH` 不变且不留临时文件；非法版本、相对目录、不支持的架构时不发起下载。

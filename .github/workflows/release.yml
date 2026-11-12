@@ -75,7 +75,7 @@ jobs:
 
           Windows 在 PowerShell 中安装本版本（自动识别架构、校验 SHA256SUMS，装到 %LOCALAPPDATA%\Programs\jumpdb 并加入用户 PATH）：
 
-              \$env:JUMPDB_VERSION='$RELEASE_TAG'; irm https://github.com/$GH_REPO/releases/download/$RELEASE_TAG/install.ps1 | iex
+              \$env:JUMPDB_VERSION='$RELEASE_TAG'; iex ([Text.Encoding]::UTF8.GetString((iwr -useb https://github.com/$GH_REPO/releases/download/$RELEASE_TAG/install.ps1).Content))
 
           安装后运行 jumpdb --help。手动安装、升级、卸载及快速开始见 [README](https://github.com/$GH_REPO/blob/$RELEASE_TAG/README.md)。
 
