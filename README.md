@@ -67,19 +67,17 @@ mv jumpdb ~/.local/bin/
 在 PowerShell（Windows PowerShell 5.1 或 PowerShell 7）中运行：
 
 ```powershell
-iex ([Text.Encoding]::UTF8.GetString((iwr -useb https://github.com/zK0G0w/jumpdb/releases/latest/download/install.ps1).Content))
+irm https://github.com/zK0G0w/jumpdb/releases/latest/download/install.ps1 | iex
 ```
 
-命令先取脚本的原始字节，再按 UTF-8 解码执行。请不要改写成常见的 `irm … | iex`：Windows PowerShell 5.1 会把这类无字符集声明的下载按 ISO-8859-1 解码，中文变成乱码，脚本无法执行。
-
-脚本会自动识别 x64 或 ARM 架构，按 `SHA256SUMS` 校验后装到 `%LOCALAPPDATA%\Programs\jumpdb\jumpdb.exe`，并把该目录加入**当前用户**的 `PATH`（不需要管理员权限，不改系统 `PATH`，已存在则跳过）。当前窗口装完即可使用，其他已打开的终端需要重新打开。`jumpdb` 正在运行时也可以升级，旧文件会在下次安装时清理。
+脚本会自动识别 x64 或 ARM 架构，按 `SHA256SUMS` 校验后装到 `%LOCALAPPDATA%\Programs\jumpdb\jumpdb.exe`，并把该目录加入**当前用户**的 `PATH`（安装过程的提示为英文）（不需要管理员权限，不改系统 `PATH`，已存在则跳过）。当前窗口装完即可使用，其他已打开的终端需要重新打开。`jumpdb` 正在运行时也可以升级，旧文件会在下次安装时清理。
 
 ```powershell
 # 安装指定版本（包括预发布版）
-$env:JUMPDB_VERSION='v0.1.0'; iex ([Text.Encoding]::UTF8.GetString((iwr -useb https://github.com/zK0G0w/jumpdb/releases/latest/download/install.ps1).Content))
+$env:JUMPDB_VERSION='v0.1.0'; irm https://github.com/zK0G0w/jumpdb/releases/latest/download/install.ps1 | iex
 
 # 安装到其他目录（必须是绝对路径）
-$env:JUMPDB_INSTALL_DIR="$env:USERPROFILE\bin"; iex ([Text.Encoding]::UTF8.GetString((iwr -useb https://github.com/zK0G0w/jumpdb/releases/latest/download/install.ps1).Content))
+$env:JUMPDB_INSTALL_DIR="$env:USERPROFILE\bin"; irm https://github.com/zK0G0w/jumpdb/releases/latest/download/install.ps1 | iex
 ```
 
 这两个环境变量会留在当前 PowerShell 会话中，后续再运行安装命令时仍然生效。

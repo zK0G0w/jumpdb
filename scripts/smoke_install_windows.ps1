@@ -4,8 +4,8 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke_install_windows.ps1 -Binary <jumpdb.exe>
 #
 # - install.ps1 由本机 127.0.0.1 回环服务以 application/octet-stream（无 charset，与 GitHub Release 资产相同）提供，
-#   子进程按文档命令取原始字节自行 UTF-8 解码后 iex，验证中文提示不乱码（irm | iex 在 5.1 下会乱码且无法执行）。
-# - 资产下载通过子进程中同名的 Invoke-WebRequest 函数从本地目录提供，回环地址仍交给真实 cmdlet；
+#   子进程原样执行 README 中的 irm | iex（地址换成回环地址），在 5.1 下真实经过 ISO-8859-1 解码。
+# - 资产下载通过子进程中同名的 Invoke-WebRequest 函数从本地目录提供（irm 取脚本不经过它）；
 #   install.ps1 本身不提供改下载来源的开关。
 # - 会读写当前用户的 PATH（HKCU\Environment），结束时恢复原值；只应在 CI runner 或可丢弃的环境中运行。
 # - 默认依次用 Windows PowerShell 5.1 与 PowerShell 7（若已安装）作为执行 install.ps1 的 shell。
@@ -26,10 +26,10 @@ $utf8Bom = New-Object Text.UTF8Encoding($true)
 $utf8 = New-Object Text.UTF8Encoding($false)
 $failures = New-Object Collections.Generic.List[string]
 
-# 安装命令自行按 UTF-8 解码，BOM 会成为脚本开头的 U+FEFF；install.ps1 必须保存为无 BOM 的 UTF-8。
-$head = [IO.File]::ReadAllBytes($installer)
-if ($head.Length -ge 3 -and $head[0] -eq 0xEF -and $head[1] -eq 0xBB -and $head[2] -eq 0xBF) {
-	[Console]::Error.WriteLine('FAIL install.ps1 不应带 UTF-8 BOM')
+# Windows PowerShell 5.1 的 irm 把无 charset 的响应按 ISO-8859-1 解码，install.ps1 出现任何非 ASCII 字节（含 BOM）都会损坏。
+$nonAscii = @([IO.File]::ReadAllBytes($installer) | Where-Object { $_ -gt 0x7E -or ($_ -lt 0x20 -and $_ -ne 0x09 -and $_ -ne 0x0A -and $_ -ne 0x0D) })
+if ($nonAscii.Count -gt 0) {
+	[Console]::Error.WriteLine("FAIL install.ps1 必须是纯 ASCII，发现 $($nonAscii.Count) 个非 ASCII 字节")
 	exit 1
 }
 
@@ -136,7 +136,6 @@ $($assignments -join "`n")
 `$uriLog = '$($uriLog.Replace("'", "''"))'
 function Invoke-WebRequest {
 	param([string]`$Uri, [string]`$OutFile, [switch]`$UseBasicParsing)
-	if (`$Uri.StartsWith('http://127.0.0.1:')) { return Microsoft.PowerShell.Utility\Invoke-WebRequest -Uri `$Uri -UseBasicParsing }
 	Add-Content -LiteralPath `$uriLog -Value `$Uri
 	if (`$Uri -notmatch '^https://github\.com/zK0G0w/jumpdb/releases/(latest/download|download/v[0-9A-Za-z.+-]+)/([^/]+)$') { throw 'unexpected uri' }
 	`$source = Join-Path `$fixtureDir `$Matches[2]
@@ -144,7 +143,7 @@ function Invoke-WebRequest {
 	Copy-Item -LiteralPath `$source -Destination `$OutFile
 }
 $prelude
-iex ([Text.Encoding]::UTF8.GetString((iwr -useb '$($script:server.Url)').Content))
+irm '$($script:server.Url)' | iex
 `$code = `$LASTEXITCODE
 Write-Output 'SESSION-ALIVE'
 $postlude
@@ -264,9 +263,9 @@ if (Get-Command Fail -ErrorAction SilentlyContinue) { Write-Output 'LEAKED' }
 '@
 		$result = Invoke-Installer $shell @{ LOCALAPPDATA = $local; JUMPDB_VERSION = $null; JUMPDB_INSTALL_DIR = $null } '' $postlude
 		Assert ($result.Code -eq 0) '首次安装应成功' $result
-		Assert-Contains $result.Out "已安装 ${target}：$expectedVersion" '首次安装提示' $result
-		Assert-Contains $result.Out "已把 $dir 加入当前用户的 PATH" 'PATH 写入提示' $result
-		Assert-Contains $result.Out '下一步：运行 jumpdb --help 查看命令' '下一步提示' $result
+		Assert-Contains $result.Out "Installed ${target}: $expectedVersion" '首次安装提示' $result
+		Assert-Contains $result.Out "Added $dir to your user PATH" 'PATH 写入提示' $result
+		Assert-Contains $result.Out 'Next: run jumpdb --help to see the commands' '下一步提示' $result
 		Assert-Contains $result.Out "RESOLVED=$target" '当前会话应能直接找到 jumpdb' $result
 		Assert (-not $result.Out.Contains('LEAKED')) '不应在调用者会话中留下函数' $result
 		Assert (($result.Uris -join '|') -eq "https://github.com/zK0G0w/jumpdb/releases/latest/download/$asset|https://github.com/zK0G0w/jumpdb/releases/latest/download/SHA256SUMS") '应从 latest 下载压缩包与校验文件' $result
@@ -280,8 +279,8 @@ if (Get-Command Fail -ErrorAction SilentlyContinue) { Write-Output 'LEAKED' }
 		# 再次安装：显示升级，PATH 不重复写入。
 		$result = Invoke-Installer $shell @{ LOCALAPPDATA = $local; JUMPDB_VERSION = $null; JUMPDB_INSTALL_DIR = $null } '' ''
 		Assert ($result.Code -eq 0) '再次安装应成功' $result
-		Assert-Contains $result.Out "已升级 ${target}：$expectedVersion → $expectedVersion" '升级提示' $result
-		Assert (-not $result.Out.Contains('加入当前用户的 PATH')) '已在 PATH 中时不应再次写入' $result
+		Assert-Contains $result.Out "Upgraded ${target}: $expectedVersion -> $expectedVersion" '升级提示' $result
+		Assert (-not $result.Out.Contains('to your user PATH')) '已在 PATH 中时不应再次写入' $result
 		Assert ((Test-UserPathCount $dir) -eq 1) '再次安装后 PATH 不应重复' $result
 
 		# 覆盖不支持 version 命令的旧版本。
@@ -293,7 +292,7 @@ if (Get-Command Fail -ErrorAction SilentlyContinue) { Write-Output 'LEAKED' }
 		Copy-Item -LiteralPath $oldExe -Destination $target
 		$result = Invoke-Installer $shell @{ LOCALAPPDATA = $local; JUMPDB_VERSION = $null; JUMPDB_INSTALL_DIR = $null } '' ''
 		Assert ($result.Code -eq 0) '覆盖旧版本应成功' $result
-		Assert-Contains $result.Out "已升级 ${target}：旧版本（不支持 version 命令） → $expectedVersion" '旧版本升级提示' $result
+		Assert-Contains $result.Out "Upgraded ${target}: an older version (no version command) -> $expectedVersion" '旧版本升级提示' $result
 		Assert ((Get-Sha $target) -eq $binaryHash) '旧版本应被替换' $result
 
 		# 指定版本与自定义目录（含空格和末尾反斜杠）。
@@ -314,7 +313,7 @@ if (Get-Command Fail -ErrorAction SilentlyContinue) { Write-Output 'LEAKED' }
 		$result = Invoke-Installer $shell @{ LOCALAPPDATA = $local; JUMPDB_VERSION = $null; JUMPDB_INSTALL_DIR = $null } '' ''
 		$state = Get-UserPathState
 		Assert ($result.Code -eq 0) '已有 %VAR% 条目时应安装成功' $result
-		Assert (-not $result.Out.Contains('加入当前用户的 PATH')) '%VAR% 条目应视为已在 PATH 中' $result
+		Assert (-not $result.Out.Contains('to your user PATH')) '%VAR% 条目应视为已在 PATH 中' $result
 		Assert ($state.Raw -ceq $rawPath -and $state.Kind -eq [Microsoft.Win32.RegistryValueKind]::ExpandString) '不应改写已有 PATH 及其类型' $result
 
 		# PATH 中更靠前的其他 jumpdb.exe 应给出警告。
@@ -326,7 +325,7 @@ if (Get-Command Fail -ErrorAction SilentlyContinue) { Write-Output 'LEAKED' }
 		$prelude = "`$env:Path = '$($other.Replace("'", "''"));' + `$env:Path"
 		$result = Invoke-Installer $shell @{ LOCALAPPDATA = $local; JUMPDB_VERSION = $null; JUMPDB_INSTALL_DIR = $null } $prelude ''
 		Assert ($result.Code -eq 0) '存在冲突时仍应安装成功' $result
-		Assert-Contains $result.Out "警告：当前 PATH 中优先生效的 jumpdb 是 $(Join-Path $other 'jumpdb.exe')" '冲突警告' $result
+		Assert-Contains $result.Out "Warning: the jumpdb found first on PATH is $(Join-Path $other 'jumpdb.exe')" '冲突警告' $result
 
 		# 旧版本正在运行时仍可替换；旧文件在进程退出后的下一次安装中清理。
 		Set-UserPathState $originalPath
@@ -351,7 +350,7 @@ if (Get-Command Fail -ErrorAction SilentlyContinue) { Write-Output 'LEAKED' }
 		Assert (-not $uiProcess.HasExited) '前置条件：jumpdb ui 应保持运行' $null
 		$result = Invoke-Installer $shell @{ LOCALAPPDATA = $local; JUMPDB_VERSION = $null; JUMPDB_INSTALL_DIR = $null } '' ''
 		Assert ($result.Code -eq 0) '旧版本运行中时应替换成功' $result
-		Assert-Contains $result.Out '旧版本仍在运行' '应提示旧文件暂未删除' $result
+		Assert-Contains $result.Out 'The previous version is still running' '应提示旧文件暂未删除' $result
 		Assert ((Get-Sha $target) -eq $binaryHash) '运行中替换后应为新文件' $result
 		$uiProcess.Kill()
 		$uiProcess.WaitForExit()
@@ -362,10 +361,10 @@ if (Get-Command Fail -ErrorAction SilentlyContinue) { Write-Output 'LEAKED' }
 
 		# 失败用例：原有文件、用户 PATH 均不变，不留临时文件，会话不被关闭。
 		$cases = @(
-			@{ Name = '校验和不一致'; Release = $mismatchRelease; Prior = $true; Error = "$asset 的 SHA-256 校验不一致，已停止安装" },
-			@{ Name = 'SHA256SUMS 缺少条目'; Release = $missingRelease; Prior = $false; Error = "SHA256SUMS 中缺少 $asset" },
-			@{ Name = '新文件无法运行'; Release = $brokenRelease; Prior = $true; Error = '新下载的 jumpdb 无法在本机运行，已保留原有文件' },
-			@{ Name = '下载失败'; Release = $emptyRelease; Prior = $false; Error = "下载 $asset 失败" }
+			@{ Name = '校验和不一致'; Release = $mismatchRelease; Prior = $true; Error = "SHA-256 mismatch for $asset; nothing was installed" },
+			@{ Name = 'SHA256SUMS 缺少条目'; Release = $missingRelease; Prior = $false; Error = "SHA256SUMS has no entry for $asset" },
+			@{ Name = '新文件无法运行'; Release = $brokenRelease; Prior = $true; Error = 'the downloaded jumpdb does not run on this machine; the existing file was kept' },
+			@{ Name = '下载失败'; Release = $emptyRelease; Prior = $false; Error = "could not download $asset" }
 		)
 		foreach ($case in $cases) {
 			Set-UserPathState $originalPath
@@ -386,10 +385,10 @@ if (Get-Command Fail -ErrorAction SilentlyContinue) { Write-Output 'LEAKED' }
 		# 参数与环境错误：不发起任何下载。
 		$script:releaseDir = $script:goodRelease
 		$cases = @(
-			@{ Name = '版本缺少 v 前缀'; Envs = @{ JUMPDB_VERSION = '0.1.0'; JUMPDB_INSTALL_DIR = $null }; Prelude = ''; Error = 'JUMPDB_VERSION 应为 v 开头的标签' },
-			@{ Name = '版本含非法字符'; Envs = @{ JUMPDB_VERSION = 'v1;x'; JUMPDB_INSTALL_DIR = $null }; Prelude = ''; Error = 'JUMPDB_VERSION 含有不允许的字符' },
-			@{ Name = '相对安装目录'; Envs = @{ JUMPDB_VERSION = $null; JUMPDB_INSTALL_DIR = 'relative\dir' }; Prelude = ''; Error = 'JUMPDB_INSTALL_DIR 必须是绝对路径' },
-			@{ Name = '不支持的架构'; Envs = @{ JUMPDB_VERSION = $null; JUMPDB_INSTALL_DIR = $null }; Prelude = 'function Get-CimInstance { [pscustomobject]@{ Architecture = 5 } }'; Error = '不支持的处理器架构（5）' }
+			@{ Name = '版本缺少 v 前缀'; Envs = @{ JUMPDB_VERSION = '0.1.0'; JUMPDB_INSTALL_DIR = $null }; Prelude = ''; Error = 'JUMPDB_VERSION must be a tag starting with v' },
+			@{ Name = '版本含非法字符'; Envs = @{ JUMPDB_VERSION = 'v1;x'; JUMPDB_INSTALL_DIR = $null }; Prelude = ''; Error = 'JUMPDB_VERSION contains characters that are not allowed' },
+			@{ Name = '相对安装目录'; Envs = @{ JUMPDB_VERSION = $null; JUMPDB_INSTALL_DIR = 'relative\dir' }; Prelude = ''; Error = 'JUMPDB_INSTALL_DIR must be an absolute path' },
+			@{ Name = '不支持的架构'; Envs = @{ JUMPDB_VERSION = $null; JUMPDB_INSTALL_DIR = $null }; Prelude = 'function Get-CimInstance { [pscustomobject]@{ Architecture = 5 } }'; Error = 'unsupported processor architecture (5)' }
 		)
 		foreach ($case in $cases) {
 			Set-UserPathState $originalPath
@@ -417,4 +416,4 @@ if ($failures.Count -gt 0) {
 	[Console]::Error.WriteLine("install.ps1 Windows 合成 smoke 失败：共 $($failures.Count) 项，详见上方 FAIL 行。")
 	exit 1
 }
-Write-Host "install.ps1 Windows 合成 smoke 通过（$($Shells -join '、')）：安装命令 UTF-8 解码、首次安装与升级、旧版覆盖、指定版本与目录、用户 PATH 写入与去重、冲突警告、运行中替换、校验失败与无法运行时保留原文件、参数与架构错误。"
+Write-Host "install.ps1 Windows 合成 smoke 通过（$($Shells -join '、')）：irm | iex 纯 ASCII 解码、首次安装与升级、旧版覆盖、指定版本与目录、用户 PATH 写入与去重、冲突警告、运行中替换、校验失败与无法运行时保留原文件、参数与架构错误。"
