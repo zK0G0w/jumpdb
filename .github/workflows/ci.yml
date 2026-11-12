@@ -84,3 +84,77 @@ jobs:
           path: dist/jumpdb-darwin-${{ matrix.arch }}.tar.gz
           if-no-files-found: error
           retention-days: 7
+
+  check-windows:
+    name: Windows / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            arch: amd64
+            race: true
+          # windows/arm64 不支持 -race。
+          - runner: windows-11-arm
+            arch: arm64
+            race: false
+    env:
+      EXPECTED_ARCH: ${{ matrix.arch }}
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: 安装 Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: 确认原生运行架构
+        run: |
+          go version
+          test "$(go env GOOS)/$(go env GOARCH)" = "windows/$EXPECTED_ARCH"
+      - name: 全量测试
+        run: go test ./... -count=1
+      - name: Race 检查
+        if: matrix.race
+        run: go test -race ./... -count=1
+      - name: 静态检查
+        run: go vet ./...
+      - name: 构建
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          # 版本注入规则与 macOS 任务一致。
+          version=dev
+          if [[ "$REF_TYPE" == tag ]]; then
+            [[ "$REF_NAME" =~ ^v[0-9A-Za-z.+-]+$ ]] || { echo "标签名不符合版本格式" >&2; exit 1; }
+            version="$REF_NAME"
+          fi
+          go build ./...
+          mkdir -p package
+          CGO_ENABLED=0 go build -trimpath \
+            -ldflags "-X github.com/zK0G0w/jumpdb/internal/cli.version=$version" \
+            -o package/jumpdb.exe ./cmd/jumpdb
+          actual="$(./package/jumpdb.exe version | tr -d '\r')"
+          echo "$actual"
+          test "$actual" = "jumpdb $version (windows/$EXPECTED_ARCH)"
+      - name: 安装脚本合成验证
+        # 依次用 Windows PowerShell 5.1 与 PowerShell 7 执行 install.ps1；会临时改动 runner 的用户 PATH，结束时恢复。
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke_install_windows.ps1 -Binary package/jumpdb.exe
+      - name: 打包已验证的二进制
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item README.md package/README.md
+          Compress-Archive -Path package/jumpdb.exe, package/README.md -DestinationPath "dist/jumpdb-windows-$env:EXPECTED_ARCH.zip"
+      - name: 保存构建产物
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: jumpdb-windows-${{ matrix.arch }}
+          path: dist/jumpdb-windows-${{ matrix.arch }}.zip
+          if-no-files-found: error
+          retention-days: 7

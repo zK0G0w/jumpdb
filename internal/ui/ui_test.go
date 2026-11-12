@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -87,7 +88,7 @@ func TestConfigurationFirstSetupTokenUpdateAndReconfigure(t *testing.T) {
 		t.Fatalf("首次配置失败：%v", result["error"])
 	}
 	info, err := os.Stat(h.path)
-	if err != nil || info.Mode().Perm() != 0600 {
+	if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0600) {
 		t.Fatal("配置权限不正确")
 	}
 	view, raw := h.state()

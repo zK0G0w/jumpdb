@@ -5,7 +5,7 @@
 ## 配置
 
 - 默认路径 `~/.config/jumpdb/config.json`；绝对路径的 `$XDG_CONFIG_HOME` 优先，未设置、为空或为相对路径时回退默认位置。
-- 目录 `0700`、文件 `0600`，同目录临时文件原子替换，创建及更新后权限都保持 `0600`。
+- 类 Unix 系统：目录 `0700`、文件 `0600`，同目录临时文件原子替换，创建及更新后权限都保持 `0600`，读取时权限不是 `0600` 即拒绝。Windows：Go 只能报告 `0666`/`0444`，无法表达 ACL，权限位检查在 `internal/config/perm_windows.go` 中恒通过，不修改 ACL，保护依赖用户主目录继承的访问控制；终端提示据此不写“0600”。不得把 Windows 描述为已校验权限。
 - 录入只接受终端；Token 不通过命令行明文参数传入。`token set --configure` 显式重录全部配置。
 - 配置损坏或权限异常时报错，不静默重置。
 - 不读取、自动迁移或删除旧 macOS 路径 `~/Library/Application Support/jumpdb/config.json`。若要读取或迁移旧工具的 `~/.ssotool_mac_conf.json`，先明确迁移行为，保留原文件，不静默覆盖。

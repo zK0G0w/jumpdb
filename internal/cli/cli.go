@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
@@ -136,7 +135,7 @@ func Run(ctx context.Context, args []string, input, output, errorOutput *os.File
 		newSession: func(ctx context.Context, options session.Options) (sessionClient, error) {
 			return session.New(ctx, options)
 		},
-		openBrowser: func(address string) error { return exec.Command("open", address).Run() },
+		openBrowser: openURL,
 	}
 	return app.run(ctx, args)
 }
@@ -298,7 +297,7 @@ func (app *application) setToken(ctx context.Context, configure bool) error {
 	}); err != nil {
 		return err
 	}
-	fmt.Fprintln(app.out, "本地配置已保存（0600）；未验证 Token 有效性。")
+	fmt.Fprintf(app.out, "本地配置已保存（%s）；未验证 Token 有效性。\n", config.ProtectionNote)
 	return nil
 }
 

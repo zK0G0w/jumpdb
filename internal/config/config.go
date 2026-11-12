@@ -142,7 +142,7 @@ func Load(path string) (Data, error) {
 	if err != nil {
 		return Data{}, errors.New("无法检查本地配置")
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
+	if !info.Mode().IsRegular() || !privateEnough(info) {
 		return Data{}, errors.New("配置必须是权限为 0600 的普通文件，请先检查文件及权限")
 	}
 	file, err := os.Open(path)
