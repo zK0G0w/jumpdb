@@ -64,13 +64,31 @@ mv jumpdb ~/.local/bin/
 
 ### Windows 安装
 
-Windows 没有一键安装脚本。在 [Releases](https://github.com/zK0G0w/jumpdb/releases) 页面下载与本机架构对应的 zip 和 `SHA256SUMS`（x64 即 Intel/AMD 用 `jumpdb-windows-amd64.zip`，ARM 设备用 `jumpdb-windows-arm64.zip`），放在同一目录，在 PowerShell 中：
+在 PowerShell（Windows PowerShell 5.1 或 PowerShell 7）中运行：
+
+```powershell
+irm https://github.com/zK0G0w/jumpdb/releases/latest/download/install.ps1 | iex
+```
+
+脚本会自动识别 x64 或 ARM 架构，按 `SHA256SUMS` 校验后装到 `%LOCALAPPDATA%\Programs\jumpdb\jumpdb.exe`，并把该目录加入**当前用户**的 `PATH`（不需要管理员权限，不改系统 `PATH`，已存在则跳过）。当前窗口装完即可使用，其他已打开的终端需要重新打开。`jumpdb` 正在运行时也可以升级，旧文件会在下次安装时清理。
+
+```powershell
+# 安装指定版本（包括预发布版）
+$env:JUMPDB_VERSION='v0.1.0'; irm https://github.com/zK0G0w/jumpdb/releases/latest/download/install.ps1 | iex
+
+# 安装到其他目录（必须是绝对路径）
+$env:JUMPDB_INSTALL_DIR="$env:USERPROFILE\bin"; irm https://github.com/zK0G0w/jumpdb/releases/latest/download/install.ps1 | iex
+```
+
+这两个环境变量会留在当前 PowerShell 会话中，后续再运行安装命令时仍然生效。
+
+手动安装：在 [Releases](https://github.com/zK0G0w/jumpdb/releases) 页面下载与本机架构对应的 zip 和 `SHA256SUMS`（x64 即 Intel/AMD 用 `jumpdb-windows-amd64.zip`，ARM 设备用 `jumpdb-windows-arm64.zip`），放在同一目录，在 PowerShell 中：
 
 ```powershell
 # 输出的哈希需与 SHA256SUMS 中对应行一致
 (Get-FileHash jumpdb-windows-amd64.zip -Algorithm SHA256).Hash
-Expand-Archive jumpdb-windows-amd64.zip -DestinationPath $env:USERPROFILE\bin
-# 把 %USERPROFILE%\bin 加入用户 PATH 后，重新打开终端
+Expand-Archive jumpdb-windows-amd64.zip -DestinationPath $env:LOCALAPPDATA\Programs\jumpdb
+# 把 %LOCALAPPDATA%\Programs\jumpdb 加入用户 PATH 后，重新打开终端
 jumpdb version
 ```
 
@@ -86,6 +104,7 @@ jumpdb version
 
 - **升级**：重新运行一键安装命令。脚本先校验，再原子替换已安装的文件，并显示新旧版本；配置不受影响，无需重新录入。手动安装的话，重复手动安装的步骤即可。
 - **卸载**：删除二进制文件即可，例如 `rm ~/.local/bin/jumpdb`。配置目录 `~/.config/jumpdb/` 中保存着 Token 和密钥，卸载不会自动删除它，请自行决定是否执行 `rm -rf ~/.config/jumpdb`。
+- **Windows 卸载**：删除 `%LOCALAPPDATA%\Programs\jumpdb` 目录，并在“设置 → 系统 → 系统信息 → 高级系统设置 → 环境变量”中从用户 `Path` 移除该目录。配置在 `%USERPROFILE%\.config\jumpdb\`，同样需要自行决定是否删除。
 
 ## 快速开始
 
@@ -159,7 +178,7 @@ jumpdb version
 
 - 仅支持 MySQL；初始会话不是 MySQL 时拒绝连接。
 - 真实环境只验证了 DBX（Apple Silicon）。Navicat、`mysql` 命令行等其他客户端，空闲超过 10 秒、长查询、Token 失效提示，以及 Intel 实机都尚未在真实环境验证。
-- Windows 版（amd64、arm64）只有 CI 原生 runner 上的合成测试，终端录入、`ui` 打开浏览器、真实门户与数据库登录都没有实机验证；配置文件不检查也不设置权限，见[配置文件](#配置文件)。Windows 上收到终止信号时不保证先恢复终端回显，`Ctrl+C` 在录入时可正常取消。
+- Windows 版（amd64、arm64）已在实机上完成 `token set` 录入以及 `ui`、`connect` 的真实登录；`install.ps1` 只有 CI 上的合成验证，尚未从 Release 实际安装。配置文件不检查也不设置权限，见[配置文件](#配置文件)。Windows 上收到终止信号时不保证先恢复终端回显，`Ctrl+C` 在录入时可正常取消。
 - 不支持自动网页登录、自动获取或续期 Token、开机自启和自动更新。
 - 保存过资源列表或非默认主题后，旧版本 `jumpdb` 会拒绝读取该配置。
 - 内置的中间证书有效期至 2027-11-02，门户换证时需要更新程序。

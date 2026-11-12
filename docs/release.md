@@ -7,9 +7,9 @@
 CI 与发布共用 `.github/workflows/ci.yml`，新增的验证应放在这个共用流程中。
 
 - **检查**（`ci.yml`）：PR、推送 `main`、手动运行时触发，也被发布流程复用。在 `macos-15`（arm64）和 `macos-15-intel`（amd64）原生 runner 上分别确认运行架构，执行全量测试、`race`、`vet`、`build` 及 `scripts/smoke_cli.py`，通过后打包。临时构建产物保留 7 天。
-- **Windows 检查**（`ci.yml` 的 `check-windows`）：在 `windows-2025`（amd64）和 `windows-11-arm`（arm64）原生 runner 上确认运行架构，执行全量测试、`vet`、`build` 并核对 `jumpdb version`，打包为 zip。`race` 仅在 amd64 运行（Go 不支持 `windows/arm64` 的 `-race`）。不运行 `smoke_cli.py`：它依赖 `/bin/sh`、假 `curl` 与 macOS 行为。
+- **Windows 检查**（`ci.yml` 的 `check-windows`）：在 `windows-2025`（amd64）和 `windows-11-arm`（arm64）原生 runner 上确认运行架构，执行全量测试、`vet`、`build`，核对 `jumpdb version` 并运行 `scripts/smoke_install_windows.ps1`，然后打包为 zip。`race` 仅在 amd64 运行（Go 不支持 `windows/arm64` 的 `-race`）。不运行 `smoke_cli.py`：它依赖 `/bin/sh`、假 `curl` 与 macOS 行为。
 - **版本注入**：只有标签触发的运行才用 ldflags 把标签名注入 `internal/cli.version`，PR 与 `main` 构建保持 `dev`。标签名必须匹配 `^v[0-9A-Za-z.+-]+$`，构建后核对 `jumpdb version` 输出的版本与架构。
-- **发布**（`release.yml`）：推送 `v*` 标签触发。macOS 与 Windows 共四个架构的检查全部通过后，直接使用本次检查的压缩包，不重新构建；`install.sh` 从同一提交检出。先创建草稿并上传全部资产，成功后再公开。标签含 `-`（如 `v0.1.0-rc.1`）时标为预发布。
+- **发布**（`release.yml`）：推送 `v*` 标签触发。macOS 与 Windows 共四个架构的检查全部通过后，直接使用本次检查的压缩包，不重新构建；`install.sh` 与 `install.ps1` 从同一提交检出。先创建草稿并上传全部资产，成功后再公开。标签含 `-`（如 `v0.1.0-rc.1`）时标为预发布。
 - **权限**：检查 job 只有 `contents: read`；只有发布 job 有 `contents: write`，使用内置 `GITHUB_TOKEN`，无需个人 PAT。合成验证不使用业务凭据，CI 只运行合成门户和本机回环服务。
 - **Actions 版本**：官方 Actions 固定完整提交 SHA，注释标注版本号。升级时核对官方版本与完整 SHA。
 
@@ -22,7 +22,8 @@ CI 与发布共用 `.github/workflows/ci.yml`，新增的验证应放在这个�
 | `jumpdb-darwin-arm64.tar.gz`、`jumpdb-darwin-amd64.tar.gz` | 仅含可执行文件 `jumpdb` 与 `README.md`，不含配置、测试样本或凭据 |
 | `jumpdb-windows-amd64.zip`、`jumpdb-windows-arm64.zip` | 仅含 `jumpdb.exe` 与 `README.md`；无 `install.sh` 对应物，用户手动解压并配置 PATH |
 | `SHA256SUMS` | 四个压缩包的 SHA-256；只能发现下载损坏，不能证明来源 |
-| `install.sh` | 一键安装脚本，不列入 `SHA256SUMS` |
+| `install.sh` | macOS 一键安装脚本，不列入 `SHA256SUMS` |
+| `install.ps1` | Windows 一键安装脚本，不列入 `SHA256SUMS` |
 
 Release 说明由 `release.yml` 生成，给出固定到本标签的安装命令，并链接到该标签的 README，不复制完整教程。macOS 产物没有 Developer ID 签名和公证，可能被 Gatekeeper 或企业策略拦截，Windows 产物没有代码签名，可能被 SmartScreen 拦截；不宣称 Go 二进制天然免拦截，签名与公证需要另外的分发身份。
 
@@ -33,6 +34,16 @@ Release 说明由 `release.yml` 生成，给出固定到本标签的安装命令
 - 行为约束：不使用 `sudo`，不修改 shell 配置，不读取或改动 jumpdb 配置，不移除隔离属性（不执行 `xattr`），不提供可改下载来源的开关；安装先写同目录临时文件再原子替换。
 - 压缩包的文件名或内容结构变化时，`install.sh` 与 smoke 中的 `make_release()` 需一起修改。
 - 修改后按 [development.md](development.md#smoke_clipy) 运行 smoke。
+
+## install.ps1 维护
+
+- 与 `install.sh` 相同：默认 `latest`（只指向最新稳定版），`JUMPDB_VERSION` 指定版本，仓库路径写死，不提供可改下载来源的开关；先写同目录临时文件，确认能运行后再替换。
+- 默认目录 `%LOCALAPPDATA%\Programs\jumpdb`，`JUMPDB_INSTALL_DIR` 覆盖。与 `install.sh` 不同，它会把安装目录追加到**当前用户**的 `PATH`（直接写 `HKCU\Environment`，保留值类型与未展开的 `%VAR%` 条目），不修改系统 `PATH`，不需要管理员权限，不执行 `Unblock-File`。
+- 必须兼容 Windows PowerShell 5.1：不用 `??`、三元运算符、`&&` 等 PowerShell 7 语法；运行原生命令时临时放宽 `$ErrorActionPreference`。
+- 文件必须保持 UTF-8 BOM：Release 资产响应没有 charset，`Invoke-RestMethod` 靠 BOM 解码中文。编辑器去掉 BOM 时，smoke 的中文断言会失败。
+- 通过 `iex` 执行时与用户共用会话：逻辑全部放在 `& { }` 脚本块内，失败时用 `$LASTEXITCODE` 而不是 `exit`，避免关闭用户的终端。
+- 运行中的 `jumpdb.exe` 不能覆盖但可以改名：先把旧文件改名为 `.jumpdb.old.<PID>.exe`，删不掉时留到下次安装清理。
+- 压缩包的文件名或内容结构变化时，`install.ps1` 与 smoke 中的 `New-Release` 需一起修改。
 
 ## 发布步骤
 

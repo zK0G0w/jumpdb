@@ -1,6 +1,6 @@
 # jumpdb
 
-将 Python 版堡垒机数据库登录工具重写为轻量 Go CLI：复用用户在网页取得的授权 Token 申请数据库运维会话，解密连接参数，并提供与客户端无关的本地 TCP 隧道。已实现 `token set`、`connect`、`ui`、`version`，MySQL 主路径已在真实环境用 DBX 跑通；平台为 macOS `darwin/arm64`、`darwin/amd64`，以及 Windows `windows/amd64`、`windows/arm64`（仅有 CI 原生合成验证，未做真实联调）。
+将 Python 版堡垒机数据库登录工具重写为轻量 Go CLI：复用用户在网页取得的授权 Token 申请数据库运维会话，解密连接参数，并提供与客户端无关的本地 TCP 隧道。已实现 `token set`、`connect`、`ui`、`version`，MySQL 主路径已在真实环境用 DBX 跑通；平台为 macOS `darwin/arm64`、`darwin/amd64`，以及 Windows `windows/amd64`、`windows/arm64`。
 
 ## 硬约束（始终适用）
 
