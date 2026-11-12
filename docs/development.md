@@ -32,7 +32,11 @@ go vet ./...
 GOOS=darwin GOARCH=arm64 go build -o /tmp/jumpdb-darwin-arm64 ./cmd/jumpdb
 GOOS=darwin GOARCH=amd64 go build -o /tmp/jumpdb-darwin-amd64 ./cmd/jumpdb
 
-# 实际二进制的合成 smoke；只能在本机架构上运行
+# Windows 交叉编译与测试编译（只证明能编译，不等于 Windows 上运行通过）
+GOOS=windows GOARCH=amd64 go vet ./...
+GOOS=windows GOARCH=arm64 go vet ./...
+
+# 实际二进制的合成 smoke；只能在本机架构上运行，仅适用于 macOS
 python3 -I -B scripts/smoke_cli.py /tmp/jumpdb-darwin-arm64
 ```
 

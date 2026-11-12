@@ -1,6 +1,6 @@
 # jumpdb
 
-`jumpdb` 是一个 macOS 命令行工具：复用你在网页登录后取得的授权 Token 申请数据库运维会话，并在本机 `127.0.0.1` 开放一个 TCP 隧道。DBX、Navicat、DBeaver、DataGrip、`mysql` 命令行等客户端连接这个本地端口即可访问数据库。
+`jumpdb` 是一个 macOS / Windows 命令行工具：复用你在网页登录后取得的授权 Token 申请数据库运维会话，并在本机 `127.0.0.1` 开放一个 TCP 隧道。DBX、Navicat、DBeaver、DataGrip、`mysql` 命令行等客户端连接这个本地端口即可访问数据库。
 
 > **状态**：MySQL 主路径已在真实环境用 DBX 跑通；其他客户端、长时间空闲、长查询等尚未验证，见[已知限制](#已知限制)。
 
@@ -10,7 +10,7 @@
 
 ## 安装
 
-支持 Apple Silicon（arm64）和 Intel（amd64）的 macOS，运行时不依赖 Python 或其他程序。
+支持 Apple Silicon（arm64）和 Intel（amd64）的 macOS，以及 64 位 Windows（amd64、arm64），运行时不依赖 Python 或其他程序。Windows 版目前只有 CI 上的合成验证，没有真实环境联调，见[已知限制](#已知限制)。
 
 ### 一键安装（推荐）
 
@@ -62,6 +62,20 @@ mv jumpdb ~/.local/bin/
 
 然后按上一节把 `~/.local/bin` 加入 `PATH`。
 
+### Windows 安装
+
+Windows 没有一键安装脚本。在 [Releases](https://github.com/zK0G0w/jumpdb/releases) 页面下载与本机架构对应的 zip 和 `SHA256SUMS`（x64 即 Intel/AMD 用 `jumpdb-windows-amd64.zip`，ARM 设备用 `jumpdb-windows-arm64.zip`），放在同一目录，在 PowerShell 中：
+
+```powershell
+# 输出的哈希需与 SHA256SUMS 中对应行一致
+(Get-FileHash jumpdb-windows-amd64.zip -Algorithm SHA256).Hash
+Expand-Archive jumpdb-windows-amd64.zip -DestinationPath $env:USERPROFILE\bin
+# 把 %USERPROFILE%\bin 加入用户 PATH 后，重新打开终端
+jumpdb version
+```
+
+产物没有代码签名，可能被 SmartScreen 或企业安全策略拦截；公司管理的设备请按公司策略处理。录入 Token 需要交互终端，建议使用 Windows Terminal 或 PowerShell。
+
 ### 首次运行被 macOS 拦截
 
 发布的二进制没有 Developer ID 签名和公证。通过浏览器下载的文件带有隔离属性，首次运行时可能被 macOS 拦截，提示无法验证该文件。如果你信任该文件，可以打开“系统设置 → 隐私与安全性”，在页面下方点击“仍要打开”，然后重新运行。一键安装通过 `curl` 下载，文件不带隔离属性，按 macOS 的机制通常不会出现该提示，但尚未在真实环境中实测。公司管理的设备请按公司策略处理。
@@ -106,10 +120,10 @@ mv jumpdb ~/.local/bin/
 ### 配置文件
 
 - 位置默认是 `~/.config/jumpdb/config.json`。如果 `$XDG_CONFIG_HOME` 是绝对路径，则使用 `$XDG_CONFIG_HOME/jumpdb/config.json`。
-- 目录权限为 `0700`，文件权限为 `0600`，每次保存都先写临时文件再原子替换。它是**权限受限的明文文件**，不是加密保险库，请像保护其他凭据一样保护本机及备份。
+- macOS：目录权限为 `0700`，文件权限为 `0600`。Windows：位置为 `%USERPROFILE%\.config\jumpdb\config.json`，权限位不适用，也不检查或修改 ACL，保护依赖用户主目录默认继承的访问控制；若用绝对路径的 `XDG_CONFIG_HOME` 指到其他用户可访问的目录，则不受保护。每次保存都先写临时文件再原子替换。它是**权限受限的明文文件**，不是加密保险库，请像保护其他凭据一样保护本机及备份。
 - 门户必须是 HTTPS 根地址。两把密钥按原始字符串录入，各恰好 16 字节，不是十六进制或 Base64。Token 只填值，不含 Cookie 名称。
 - 只能在交互终端中录入，不接受参数、管道或文件输入。录入中途按 `Ctrl+C` 不会保存任何内容。保存时不验证 Token 是否有效。
-- 配置损坏、权限不是 `0600` 或文件是符号链接时，`jumpdb` 会报错，不会自动重置。请先检查、修复或移走该文件。需要重新录入全部字段时，运行 `jumpdb token set --configure`。
+- 配置损坏、权限不是 `0600`（仅 macOS）或文件是符号链接时，`jumpdb` 会报错，不会自动重置。请先检查、修复或移走该文件。需要重新录入全部字段时，运行 `jumpdb token set --configure`。
 - 不会读取或迁移旧工具的 `~/.ssotool_mac_conf.json`，也不再读取早期版本使用的 `~/Library/Application Support/jumpdb/config.json`。如需沿用旧配置，确认新位置没有配置后手动移动过去，并保持目录 `0700`、文件 `0600`。
 
 ### 资源 ID
@@ -145,6 +159,7 @@ mv jumpdb ~/.local/bin/
 
 - 仅支持 MySQL；初始会话不是 MySQL 时拒绝连接。
 - 真实环境只验证了 DBX（Apple Silicon）。Navicat、`mysql` 命令行等其他客户端，空闲超过 10 秒、长查询、Token 失效提示，以及 Intel 实机都尚未在真实环境验证。
+- Windows 版（amd64、arm64）只有 CI 原生 runner 上的合成测试，终端录入、`ui` 打开浏览器、真实门户与数据库登录都没有实机验证；配置文件不检查也不设置权限，见[配置文件](#配置文件)。Windows 上收到终止信号时不保证先恢复终端回显，`Ctrl+C` 在录入时可正常取消。
 - 不支持自动网页登录、自动获取或续期 Token、开机自启和自动更新。
 - 保存过资源列表或非默认主题后，旧版本 `jumpdb` 会拒绝读取该配置。
 - 内置的中间证书有效期至 2027-11-02，门户换证时需要更新程序。

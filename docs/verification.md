@@ -24,6 +24,7 @@
 | Token 失效时的提示 | 未验证 | — | |
 | `connect` 在真实环境的退出清理 | 未验证 | — | 控制页的停止与退出清理已在真实环境通过 |
 | `darwin/amd64` 真实联调 | 未验证 | 仅 CI Intel 原生 runner 的合成测试 | 维护者本机无 Rosetta |
+| `windows/amd64`、`windows/arm64` 真实联调（终端录入、`ui` 打开浏览器、真实门户与客户端登录） | 未验证 | — | 本机为 macOS，仅做过交叉编译与 `go vet`，见合成与本机验证 |
 
 真实联调由维护者执行，开发过程中没有读取用户的凭据配置。
 
@@ -46,6 +47,7 @@
 | 工作流配置 | 仅合成验证 | `actionlint v1.7.12`；本机执行构建步骤（分支与标签两种情况）、打包与校验命令；假 `gh` 验证稳定版与预发布、创建失败不继续公开、`install.sh` 作为资产上传 |
 | `v*` 标签发布与 Release 上传 | 已通过 | `v0.0.1`：Release run `41469960404`（2026-11-02），上传两个压缩包与 `SHA256SUMS` 并公开 | 版本注入与 `install.sh` 资产自 `v0.0.2` 起才有，发布结果以对应 run 为准 |
 | 从 Release 用 `install.sh` 实际安装 | 部分通过 | `v0.1.0-rc.1`（Release run `41552902687`）：本机 macOS arm64 以 `/bin/sh` 一键安装失败，报 `asset�: unbound variable`（全角标点紧跟变量，UTF-8 locale 下触发；smoke 当时在 C locale 下运行而漏检）。修复后用本地脚本加 `JUMPDB_VERSION=v0.1.0-rc.1` 安装该版本成功，`jumpdb version` 输出 `jumpdb v0.1.0-rc.1 (darwin/arm64)` | `rc.1` 的 `install.sh` 资产有此缺陷；修复版经 Release 一键安装尚未验证，amd64 未安装 |
+| Windows 支持（`terminal_windows.go`、`perm_windows.go`、`browser_windows.go`、`ci.yml` 的 `check-windows`） | 仅合成验证 | 维护者 macOS 本机：`GOOS=windows` 的 `amd64`/`arm64` 通过 `go vet`（含测试代码编译）与构建；`darwin` 本机全量测试与 race 通过。**尚未在 Windows 上运行过任何测试**，`check-windows` 工作流也未在 CI 上运行；Windows 下跳过 `0600` 权限与符号链接断言，权限保护依赖用户目录 ACL 而非程序校验；Windows 不运行 `smoke_cli.py`；控制台 raw 模式录入、`Ctrl+C` 取消、`rundll32` 打开浏览器均未实测 |
 | 通过 `curl` 安装后不触发 Gatekeeper 拦截 | 未验证 | 依据 `curl` 不写入隔离属性推断 |
 
 ## 已知边界
